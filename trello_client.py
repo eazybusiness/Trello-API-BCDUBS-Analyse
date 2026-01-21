@@ -61,8 +61,53 @@ class TrelloClient:
         response.raise_for_status()
         return response.json()
     
+    def get_card_details(self, card_id: str) -> Dict[str, Any]:
+        """Get detailed information for a specific card including comments, members, and checklists."""
+        # Get basic card info
+        url = f"{self.base_url}/cards/{card_id}"
+        params = {
+            'key': self.api_key,
+            'token': self.token,
+            'fields': 'name,id,desc,due,dateLastActivity,labels,idList,closed,shortUrl',
+            'attachments': 'cover',
+            'members': 'true',
+            'member_fields': 'fullName,username,avatarUrl',
+            'checklists': 'all',
+            'checklist_fields': 'name,id,idCard,pos,nameItems',
+            'actions': 'commentCard',
+            'actions_limit': 1000,
+            'action_fields': 'date,type,data,memberCreator',
+            'action_memberCreator_fields': 'fullName,username'
+        }
+        
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        card_data = response.json()
+        
+        # Get checklist items for each checklist
+        for checklist in card_data.get('checklists', []):
+            try:
+                checklist_url = f"{self.base_url}/checklists/{checklist['id']}/items"
+                checklist_params = {
+                    'key': self.api_key,
+                    'token': self.token,
+                    'fields': 'name,state,pos,idCheckItem'
+                }
+                checklist_response = requests.get(checklist_url, params=checklist_params)
+                checklist_response.raise_for_status()
+                checklist['items'] = checklist_response.json()
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 404:
+                    # Checklist might be deleted or inaccessible
+                    checklist['items'] = []
+                    print(f"    Warning: Could not fetch items for checklist '{checklist['name']}'")
+                else:
+                    raise
+        
+        return card_data
+    
     def get_board_cards_with_lists(self, board_name: str) -> Dict[str, List[Dict[str, Any]]]:
-        """Get all cards grouped by their lists for a specific board."""
+        """Get all cards grouped by their lists for a specific board with full details."""
         board = self.find_board_by_name(board_name)
         board_id = board['id']
         
@@ -73,10 +118,13 @@ class TrelloClient:
         cards_by_list = {lst['name']: [] for lst in lists}
         list_id_to_name = {lst['id']: lst['name'] for lst in lists}
         
-        # Group cards by list
-        for card in cards:
+        # Group cards by list and fetch detailed information
+        print(f"Fetching detailed information for {len(cards)} cards...")
+        for i, card in enumerate(cards, 1):
+            print(f"  Processing card {i}/{len(cards)}: {card['name']}")
             list_name = list_id_to_name.get(card['idList'], 'Unknown')
-            cards_by_list[list_name].append(card)
+            detailed_card = self.get_card_details(card['id'])
+            cards_by_list[list_name].append(detailed_card)
         
         return {
             'board': board,
@@ -105,15 +153,52 @@ def main():
                 labels = ", ".join([label['name'] for label in card.get('labels', [])])
                 label_str = f" [{labels}]" if labels else ""
                 due_str = f" (Due: {card['due']})" if card['due'] else ""
-                print(f"  {status} {card['name']}{label_str}{due_str}")
+                print(f"\n  {status} {card['name']}{label_str}{due_str}")
+                print(f"    URL: {card.get('shortUrl', 'N/A')}")
+                
+                # Show members
+                if card.get('members'):
+                    members = ", ".join([f"{m['fullName']}(@{m['username']})" for m in card['members']])
+                    print(f"    Members: {members}")
+                
+                # Show description
                 if card.get('desc'):
-                    print(f"    Description: {card['desc'][:100]}{'...' if len(card['desc']) > 100 else ''}")
+                    desc = card['desc']
+                    if len(desc) > 150:
+                        desc = desc[:150] + "..."
+                    print(f"    Description: {desc}")
+                
+                # Show comments
+                comments = [action for action in card.get('actions', []) if action['type'] == 'commentCard']
+                if comments:
+                    print(f"    Comments ({len(comments)}):")
+                    for comment in comments[-3:]:  # Show last 3 comments
+                        creator = comment.get('memberCreator', {}).get('fullName', 'Unknown')
+                        date = comment['date'][:10]  # Just show date part
+                        text = comment['data']['text']
+                        if len(text) > 100:
+                            text = text[:100] + "..."
+                        print(f"      - {date} by {creator}: {text}")
+                
+                # Show checklists
+                if card.get('checklists'):
+                    print(f"    Checklists:")
+                    for checklist in card['checklists']:
+                        completed = sum(1 for item in checklist.get('items', []) if item['state'] == 'complete')
+                        total = len(checklist.get('items', []))
+                        print(f"      - {checklist['name']}: {completed}/{total} completed")
+                        if total > 0:
+                            for item in checklist['items'][:5]:  # Show first 5 items
+                                status = "✓" if item['state'] == 'complete' else "○"
+                                print(f"        {status} {item['name']}")
+                            if total > 5:
+                                print(f"        ... and {total - 5} more items")
         
         # Also save raw data to a file for later processing
         import json
-        with open('trello_cards.json', 'w') as f:
+        with open('trello_cards_detailed.json', 'w') as f:
             json.dump(result, f, indent=2)
-        print(f"\nRaw data saved to 'trello_cards.json'")
+        print(f"\nRaw detailed data saved to 'trello_cards_detailed.json'")
         
     except Exception as e:
         print(f"Error: {e}")
