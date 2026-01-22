@@ -77,7 +77,7 @@ def _is_due_after_cutoff(project, cutoff_date_yyyy_mm_dd: str) -> bool:
     if due_dt is None:
         return False
     cutoff_dt = datetime.fromisoformat(f"{cutoff_date_yyyy_mm_dd}T00:00:00+00:00")
-    return due_dt > cutoff_dt
+    return due_dt >= cutoff_dt
 
 def _role_map():
     return {
@@ -445,13 +445,13 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
     total_projects = len(projects)
     sorted_projects = sorted(projects, key=lambda x: x.get('last_activity', ''), reverse=True)
 
-    # Monthly summary (starting Jan 2026)
+    # Monthly summary (starting at new rates cutoff)
     monthly_projects = defaultdict(list)
     for p in projects:
         due_dt = _parse_trello_datetime(p.get('due_date', ''))
         if due_dt is None:
             continue
-        if due_dt < datetime(2026, 1, 1, tzinfo=timezone.utc):
+        if due_dt < datetime(2026, 1, 15, tzinfo=timezone.utc):
             continue
         monthly_projects[_month_key(due_dt)].append(p)
     
@@ -584,9 +584,12 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
             <!-- Monthly Summary -->
             <div class="bg-white rounded-lg shadow-lg overflow-hidden mb-8">
                 <div class="px-6 py-4 bg-gray-800 text-white">
-                    <h2 class="text-2xl font-bold">📅 Monthly Summary (from 01.2026)</h2>
+                    <h2 class="text-2xl font-bold">📅 Monthly Summary (from 15.01.2026)</h2>
                 </div>
                 <div class="p-6 space-y-8">
+                    <div class="text-sm text-gray-600">
+                        Note: Projects with due dates before 15.01.2026 are excluded because the old rates are not available.
+                    </div>
 """
 
     for month_key in sorted(monthly_projects.keys()):
