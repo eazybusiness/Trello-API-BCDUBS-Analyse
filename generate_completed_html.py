@@ -303,6 +303,7 @@ def analyze_completed_projects(data):
     
     for card in cards:
         project = {
+            'id': card.get('id', ''),
             'name': card['name'],
             'url': card.get('shortUrl', ''),
             'due_date': card.get('due', ''),
@@ -335,6 +336,25 @@ def analyze_completed_projects(data):
     
     return projects
 
+def _load_video_length_cache(cache_path: str) -> dict:
+    try:
+        if not os.path.exists(cache_path):
+            return {}
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        return {}
+    return {}
+
+def _save_video_length_cache(cache_path: str, cache: dict) -> None:
+    tmp_path = cache_path + '.tmp'
+    os.makedirs(os.path.dirname(cache_path) or '.', exist_ok=True)
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        json.dump(cache, f, indent=2, sort_keys=True)
+    os.replace(tmp_path, cache_path)
+
 def generate_navigation_menu(current_page='completed'):
     """Generate navigation menu HTML."""
     workload_active = 'bg-blue-700 text-white' if current_page == 'workload' else 'text-blue-100 hover:bg-blue-600 hover:text-white'
@@ -360,6 +380,10 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
     
     german_time = get_german_time()
     
+    cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'video_length_cache.json')
+    video_length_cache = _load_video_length_cache(cache_path)
+    cache_dirty = False
+
     # Calculate statistics
     speaker_stats = defaultdict(lambda: {'count': 0, 'projects': []})
     sheets_cache = {}
@@ -654,7 +678,18 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
 """
 
         if _is_due_after_cutoff(project, '2026-01-15'):
-            video_minutes = _find_video_minutes_from_links(project.get('google_docs_links', []), cache=sheets_cache)
+            project_cache_key = project.get('id') or project.get('url') or project.get('name')
+            cached_minutes = None
+            if project_cache_key:
+                cached_minutes = video_length_cache.get(project_cache_key)
+
+            video_minutes = cached_minutes
+            if video_minutes is None:
+                extracted_minutes = _find_video_minutes_from_links(project.get('google_docs_links', []), cache=sheets_cache)
+                video_minutes = extracted_minutes
+                if project_cache_key and extracted_minutes is not None:
+                    video_length_cache[project_cache_key] = int(extracted_minutes)
+                    cache_dirty = True
             roles_by_member = _classify_roles(project)
             rates = _compute_rates(project)
 
@@ -748,6 +783,9 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
 </body>
 </html>
 """
+
+    if cache_dirty:
+        _save_video_length_cache(cache_path, video_length_cache)
     
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(html)

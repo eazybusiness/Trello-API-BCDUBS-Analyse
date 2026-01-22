@@ -1,6 +1,7 @@
 .env
 reports/
 *.json
+!video_length_cache.json
 *.csv
 venv/
 __pycache__/
