@@ -25,6 +25,18 @@ class TrelloClient:
         response = requests.get(url, params=params)
         response.raise_for_status()
         return response.json()
+
+    def get_board_custom_fields(self, board_id: str) -> List[Dict[str, Any]]:
+        """Get custom field definitions for a board."""
+        url = f"{self.base_url}/boards/{board_id}/customFields"
+        params = {
+            'key': self.api_key,
+            'token': self.token
+        }
+
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
     
     def find_board_by_name(self, board_name: str) -> Dict[str, Any]:
         """Find a board by its name."""
@@ -68,7 +80,7 @@ class TrelloClient:
         params = {
             'key': self.api_key,
             'token': self.token,
-            'fields': 'name,id,desc,due,dateLastActivity,labels,idList,closed,shortUrl',
+            'fields': 'name,id,idBoard,desc,due,dateLastActivity,labels,idList,closed,shortUrl',
             'attachments': 'cover',
             'members': 'true',
             'member_fields': 'fullName,username,avatarUrl',
@@ -77,7 +89,8 @@ class TrelloClient:
             'actions': 'commentCard',
             'actions_limit': 1000,
             'action_fields': 'date,type,data,memberCreator',
-            'action_memberCreator_fields': 'fullName,username'
+            'action_memberCreator_fields': 'fullName,username',
+            'customFieldItems': 'true'
         }
         
         response = requests.get(url, params=params)
@@ -112,6 +125,7 @@ class TrelloClient:
         board_id = board['id']
         
         lists = self.get_lists_on_board(board_id)
+        custom_fields = self.get_board_custom_fields(board_id)
         cards = self.get_board_cards(board_id)
         
         # Create a dictionary with list names as keys
@@ -128,6 +142,7 @@ class TrelloClient:
         
         return {
             'board': board,
+            'custom_fields': custom_fields,
             'cards_by_list': cards_by_list
         }
 

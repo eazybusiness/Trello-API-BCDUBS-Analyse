@@ -295,13 +295,32 @@ def _compute_rates(project):
         'Speaker': male,
     }
 
+def _project_owner_rate(project) -> float:
+    return 2.90 if _has_label(project, 'express') else 2.25
+
 def analyze_completed_projects(data):
     """Analyze completed projects from the 'Fertig' list."""
     cards = data['cards_by_list'].get('Fertig', [])
+
+    custom_fields = data.get('custom_fields', [])
+    custom_fields_by_id = {cf.get('id'): cf for cf in custom_fields if isinstance(cf, dict) and cf.get('id')}
     
     projects = []
     
     for card in cards:
+        project_owner = None
+        for item in card.get('customFieldItems', []) or []:
+            if not isinstance(item, dict):
+                continue
+            cf = custom_fields_by_id.get(item.get('idCustomField'))
+            if not cf:
+                continue
+            if (cf.get('name') or '').strip() != 'P.O.':
+                continue
+            value = item.get('value') or {}
+            if isinstance(value, dict):
+                project_owner = (value.get('text') or '').strip() or project_owner
+
         project = {
             'id': card.get('id', ''),
             'name': card['name'],
@@ -311,7 +330,8 @@ def analyze_completed_projects(data):
             'description': card.get('desc', ''),
             'members': [],
             'google_docs_links': [],
-            'labels': [label.get('name', '') for label in card.get('labels', [])]
+            'labels': [label.get('name', '') for label in card.get('labels', [])],
+            'project_owner': project_owner
         }
         
         for member in card.get('members', []):
@@ -738,6 +758,28 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                                             <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">{minutes_cell}</td>
                                             <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">{rate:.2f}</td>
                                             <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900 font-semibold text-right">{amount_cell}</td>
+                                        </tr>
+"""
+
+            po = (project.get('project_owner') or '').strip()
+            if po:
+                po_rate = _project_owner_rate(project)
+                if video_minutes is None:
+                    po_amount = None
+                else:
+                    po_amount = float(video_minutes) * float(po_rate)
+                    total_amount += po_amount
+
+                po_amount_cell = "—" if po_amount is None else f"{po_amount:.2f}"
+                po_minutes_cell = "—" if video_minutes is None else f"{video_minutes}"
+
+                html += f"""
+                                        <tr class="hover:bg-gray-50">
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">{po}</td>
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700">Project Owner</td>
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">{po_minutes_cell}</td>
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">{po_rate:.2f}</td>
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900 font-semibold text-right">{po_amount_cell}</td>
                                         </tr>
 """
 
