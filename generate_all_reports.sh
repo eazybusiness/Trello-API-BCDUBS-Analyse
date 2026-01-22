@@ -44,14 +44,12 @@ else
     exit 1
 fi
 
-# Check if trello_cards_detailed.json exists
-if [ ! -f "trello_cards_detailed.json" ]; then
-    log_message "Fetching fresh data from Trello..."
-    python3 trello_client.py >> "$LOG_FILE" 2>&1
-    if [ $? -ne 0 ]; then
-        log_message "ERROR: Failed to fetch Trello data"
-        exit 1
-    fi
+# Always refresh trello_cards_detailed.json
+log_message "Fetching fresh data from Trello..."
+python3 trello_client.py >> "$LOG_FILE" 2>&1
+if [ $? -ne 0 ]; then
+    log_message "ERROR: Failed to fetch Trello data"
+    exit 1
 fi
 
 # Generate Speaker Workload Report

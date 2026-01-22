@@ -1,10 +1,12 @@
 import json
 import re
+import os
+import sys
+import time
 from datetime import datetime, timezone
 from collections import defaultdict
 import csv
 import io
-import math
 import requests
 import pytz
 
@@ -21,8 +23,8 @@ def get_german_time():
 def extract_google_docs_link(text):
     """Extract Google Docs/Sheets links from text."""
     patterns = [
-        r'https://docs\.google\.com/[^\s\)]+',
-        r'https://drive\.google\.com/[^\s\)]+',
+        r'https://docs\.google\.com/[^\s\)\]]+',
+        r'https://drive\.google\.com/[^\s\)\]]+',
     ]
     
     links = []
@@ -32,8 +34,19 @@ def extract_google_docs_link(text):
     
     cleaned_links = []
     for link in links:
-        cleaned = link.rstrip('.,;:)]}')
-        if cleaned not in cleaned_links:
+        cleaned = link.strip()
+
+        # Handle markdown links: [label](https://...)
+        if '](' in cleaned:
+            cleaned = cleaned.split('](', 1)[1]
+
+        cleaned = cleaned.rstrip('.,;:)]}]"\'')
+
+        # If we still have a trailing "](" artifact, strip anything after it.
+        if '](' in cleaned:
+            cleaned = cleaned.split('](', 1)[0]
+
+        if cleaned and cleaned not in cleaned_links:
             cleaned_links.append(cleaned)
     
     return cleaned_links
@@ -164,6 +177,20 @@ def _google_sheet_to_csv_url(url: str) -> str | None:
     gid = gid_match.group(1) if gid_match else '0'
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 
+def _google_sheet_to_gviz_csv_url(url: str) -> str | None:
+    if not url:
+        return None
+    if 'docs.google.com/spreadsheets/' not in url:
+        return None
+    m = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
+    if not m:
+        return None
+    sheet_id = m.group(1)
+    gid_match = re.search(r'[#&?]gid=([0-9]+)', url)
+    gid = gid_match.group(1) if gid_match else '0'
+    # gviz endpoint is often more reliable for public sheets
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid={gid}"
+
 def _extract_duration_minutes_from_sheet_csv(csv_text: str) -> int | None:
     if not csv_text:
         return None
@@ -190,20 +217,59 @@ def _extract_duration_minutes_from_sheet_csv(csv_text: str) -> int | None:
         total_minutes += 1
     return total_minutes
 
-def _find_video_minutes_from_links(links):
-    for link in links or []:
+def _find_video_minutes_from_links(links, cache: dict | None = None):
+    # Allow disabling Sheets fetch entirely to guarantee fast runs.
+    if os.getenv('SHEETS_FETCH', '1').strip() in {'0', 'false', 'False', 'no', 'NO'}:
+        return None
+
+    cache = cache if cache is not None else {}
+    start = time.time()
+    max_seconds = float(os.getenv('SHEETS_FETCH_MAX_SECONDS', '25'))
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+        'Accept': 'text/csv,text/plain,text/html;q=0.8,*/*;q=0.5',
+    }
+
+    # Only attempt spreadsheet links, ignore drive folders/files.
+    spreadsheet_links = [l for l in (links or []) if 'docs.google.com/spreadsheets/' in (l or '')]
+
+    for link in spreadsheet_links[:3]:
+        if time.time() - start > max_seconds:
+            return None
+
+        sheet_id_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', link)
+        sheet_id = sheet_id_match.group(1) if sheet_id_match else None
+        gid_match = re.search(r'[#&?]gid=([0-9]+)', link)
+        gid = gid_match.group(1) if gid_match else '0'
+        cache_key = f"{sheet_id}:{gid}" if sheet_id else link
+
+        if cache_key in cache:
+            return cache[cache_key]
+
         csv_url = _google_sheet_to_csv_url(link)
-        if not csv_url:
+        gviz_url = _google_sheet_to_gviz_csv_url(link)
+        candidate_urls = [u for u in [gviz_url, csv_url] if u]
+        if not candidate_urls:
             continue
-        try:
-            resp = requests.get(csv_url, timeout=15)
-            if resp.status_code != 200:
+
+        for url in candidate_urls:
+            if time.time() - start > max_seconds:
+                return None
+            try:
+                # Use short connect/read timeouts so we never hang for long.
+                resp = requests.get(url, timeout=(5, 10), allow_redirects=True, headers=headers)
+                if resp.status_code != 200:
+                    continue
+                minutes = _extract_duration_minutes_from_sheet_csv(resp.text)
+                if minutes is not None:
+                    cache[cache_key] = minutes
+                    return minutes
+            except Exception:
                 continue
-            minutes = _extract_duration_minutes_from_sheet_csv(resp.text)
-            if minutes is not None:
-                return minutes
-        except Exception:
-            continue
+
+        cache[cache_key] = None
+
     return None
 
 def _compute_rates(project):
@@ -296,12 +362,16 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
     
     # Calculate statistics
     speaker_stats = defaultdict(lambda: {'count': 0, 'projects': []})
-    for project in projects:
+    sheets_cache = {}
+
+    for idx, project in enumerate(sorted(projects, key=lambda x: x.get('last_activity', ''), reverse=True), start=1):
+        print(f"[completed-html] Rendering project {idx}/{len(projects)}: {project.get('name','')}", file=sys.stderr)
         for member in project['members']:
             speaker_name = member['name'].split()[0]
             speaker_stats[speaker_name]['count'] += 1
             speaker_stats[speaker_name]['projects'].append(project['name'])
     
+    total_participations = sum(stats['count'] for stats in speaker_stats.values())
     sorted_projects = sorted(projects, key=lambda x: x.get('last_activity', ''), reverse=True)
     
     html = f"""<!DOCTYPE html>
@@ -573,7 +643,7 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
 """
 
         if _is_due_after_cutoff(project, '2026-01-15'):
-            video_minutes = _find_video_minutes_from_links(project.get('google_docs_links', []))
+            video_minutes = _find_video_minutes_from_links(project.get('google_docs_links', []), cache=sheets_cache)
             roles_by_member = _classify_roles(project)
             rates = _compute_rates(project)
 
@@ -582,18 +652,11 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                             <h4 class="text-sm font-semibold text-gray-700 mb-3">💰 Payment (Due after 15.01.2026)</h4>
 """
 
-            if video_minutes is None:
-                html += """
-                            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
-                                Video length not found in linked Google Spreadsheet (column E).
-                            </div>
-                        </div>
-"""
-            else:
-                total_amount = 0.0
-                html += f"""
+            total_amount = 0.0
+            minutes_label = "—" if video_minutes is None else f"{video_minutes} min"
+            html += f"""
                             <div class="flex items-center justify-between mb-3">
-                                <div class="text-sm text-gray-600">Video length (rounded): <span class=\"font-semibold text-gray-900\">{video_minutes} min</span></div>
+                                <div class="text-sm text-gray-600">Video length (rounded): <span class=\"font-semibold text-gray-900\">{minutes_label}</span></div>
                             </div>
                             <div class="overflow-x-auto">
                                 <table class="min-w-full divide-y divide-gray-200">
@@ -609,32 +672,42 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                                     <tbody class="bg-white divide-y divide-gray-200">
 """
 
-                for member in project.get('members', []):
-                    person = member.get('name', '')
-                    role = roles_by_member.get(person, 'Speaker')
-                    rate = rates.get(role, rates['Speaker'])
+            for member in project.get('members', []):
+                person = member.get('name', '')
+                role = roles_by_member.get(person, 'Speaker')
+                rate = rates.get(role, rates['Speaker'])
+                if video_minutes is None:
+                    amount = None
+                else:
                     amount = float(video_minutes) * float(rate)
                     total_amount += amount
 
-                    html += f"""
+                amount_cell = "—" if amount is None else f"{amount:.2f}"
+                minutes_cell = "—" if video_minutes is None else f"{video_minutes}"
+
+                html += f"""
                                         <tr class="hover:bg-gray-50">
                                             <td class="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">{person}</td>
                                             <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700">{role}</td>
-                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">{video_minutes}</td>
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">{minutes_cell}</td>
                                             <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">{rate:.2f}</td>
-                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900 font-semibold text-right">{amount:.2f}</td>
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900 font-semibold text-right">{amount_cell}</td>
                                         </tr>
 """
 
-                html += f"""
+            total_cell = "—" if video_minutes is None else f"{total_amount:.2f}"
+            html += f"""
                                     </tbody>
                                     <tfoot class="bg-gray-50">
                                         <tr>
                                             <td class="px-4 py-2 text-sm font-semibold text-gray-900" colspan="4">Total</td>
-                                            <td class="px-4 py-2 text-sm font-bold text-gray-900 text-right">{total_amount:.2f}</td>
+                                            <td class="px-4 py-2 text-sm font-bold text-gray-900 text-right">{total_cell}</td>
                                         </tr>
                                     </tfoot>
                                 </table>
+                            </div>
+                            <div class="mt-3 text-xs text-gray-500">
+                                If video length is missing, ensure the linked Google Sheet is publicly accessible and the last non-empty value in column E looks like <span class="font-mono">00:33:44:26</span>.
                             </div>
                         </div>
 """
