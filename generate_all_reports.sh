@@ -12,16 +12,16 @@ VENV_PATH="$SCRIPT_DIR/venv"
 REPORTS_DIR="$SCRIPT_DIR/reports"
 LOG_FILE="$SCRIPT_DIR/reports/generation.log"
 
-# SSH Upload Configuration (optional)
-UPLOAD_ENABLED=false
+# Upload configuration
+UPLOAD_ENABLED=true
 REMOTE_HOST=""
 REMOTE_USER=""
 REMOTE_PATH=""
 SSH_KEY=""
 
-# Parse arguments
-if [[ "$1" == "--upload" ]]; then
-    UPLOAD_ENABLED=true
+# Parse arguments (backward compat)
+if [[ "$1" == "--no-upload" ]]; then
+    UPLOAD_ENABLED=false
 fi
 
 # Function to log messages
@@ -72,40 +72,18 @@ else
     exit 1
 fi
 
-# Upload to remote server if enabled
+# Upload reports via SFTP (IONOS_*)
 if [ "$UPLOAD_ENABLED" = true ]; then
-    log_message "Uploading reports to remote server..."
-    
-    # Check if SSH configuration is set
-    if [ -z "$REMOTE_HOST" ] || [ -z "$REMOTE_USER" ] || [ -z "$REMOTE_PATH" ]; then
-        log_message "WARNING: SSH upload enabled but configuration incomplete"
-        log_message "Please edit this script and set REMOTE_HOST, REMOTE_USER, and REMOTE_PATH"
+    log_message "Uploading reports via SFTP..."
+    python3 upload_reports.py >> "$LOG_FILE" 2>&1
+    UPLOAD_EXIT=$?
+    if [ $UPLOAD_EXIT -eq 0 ]; then
+        log_message "✓ Reports uploaded successfully"
+    elif [ $UPLOAD_EXIT -eq 2 ]; then
+        log_message "Upload skipped (missing IONOS_* config in .env)"
     else
-        # Upload HTML reports
-        if [ -n "$SSH_KEY" ]; then
-            SSH_CMD="ssh -i $SSH_KEY"
-            SCP_CMD="scp -i $SSH_KEY"
-        else
-            SSH_CMD="ssh"
-            SCP_CMD="scp"
-        fi
-        
-        # Create remote directory if it doesn't exist
-        $SSH_CMD "${REMOTE_USER}@${REMOTE_HOST}" "mkdir -p ${REMOTE_PATH}" >> "$LOG_FILE" 2>&1
-        
-        # Upload reports
-        $SCP_CMD "$REPORTS_DIR/speaker_workload_report.html" \
-                 "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/" >> "$LOG_FILE" 2>&1
-        
-        $SCP_CMD "$REPORTS_DIR/completed_projects_report.html" \
-                 "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/" >> "$LOG_FILE" 2>&1
-        
-        if [ $? -eq 0 ]; then
-            log_message "✓ Reports uploaded successfully to ${REMOTE_HOST}:${REMOTE_PATH}"
-        else
-            log_message "ERROR: Failed to upload reports"
-            exit 1
-        fi
+        log_message "ERROR: Failed to upload reports"
+        exit 1
     fi
 fi
 

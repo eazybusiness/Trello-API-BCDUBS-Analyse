@@ -20,26 +20,26 @@ cat reports/generation.log
 
 ### 2. Configure SSH Upload (Optional)
 
-If you want to automatically upload reports to your hosting provider, edit `generate_all_reports.sh`:
+If you want to automatically upload reports to your hosting provider, configure the IONOS connection in your `.env` file.
+
+Edit `.env` (it is already gitignored):
 
 ```bash
-vim generate_all_reports.sh
+vim .env
 ```
 
-Update these lines with your server details:
+Add these variables:
 
 ```bash
-UPLOAD_ENABLED=false  # Change to true to enable upload
-REMOTE_HOST="your-server.com"
-REMOTE_USER="your-username"
-REMOTE_PATH="/var/www/html/reports"  # Path on remote server
-SSH_KEY="/home/nop/.ssh/id_rsa"  # Optional: path to SSH key
+IONOS_SSH=user@host
+IONOS_SSH_PW=your_password
+IONOS_PATH=/freelancer/dubbing
 ```
 
-Test SSH upload:
-```bash
-./generate_all_reports.sh --upload
-```
+Notes:
+- `IONOS_SSH` supports `user@host` or `user@host:port`.
+- Upload runs automatically on each execution of `generate_all_reports.sh`.
+- To disable upload for a run: `./generate_all_reports.sh --no-upload`
 
 ### 3. Set Up Cronjob
 
@@ -55,7 +55,7 @@ Add this line to run every 15 minutes:
 
 Or with upload enabled:
 ```bash
-*/15 * * * * /home/nop/CascadeProjects/trello_api/generate_all_reports.sh --upload >> /home/nop/CascadeProjects/trello_api/reports/cron.log 2>&1
+*/15 * * * * /home/nop/CascadeProjects/trello_api/generate_all_reports.sh >> /home/nop/CascadeProjects/trello_api/reports/cron.log 2>&1
 ```
 
 ### 4. Verify Cronjob is Running
