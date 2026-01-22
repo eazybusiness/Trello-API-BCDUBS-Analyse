@@ -198,7 +198,7 @@ def generate_report(speaker_data):
     else:
         print("  ✅ No overdue tasks found!")
 
-def save_detailed_report(speaker_data, filename='speaker_workload_detailed.json'):
+def save_detailed_report(speaker_data, filename='reports/speaker_workload_detailed.json'):
     """Save detailed speaker data to JSON file."""
     # Convert defaultdict to regular dict for JSON serialization
     export_data = dict(speaker_data)

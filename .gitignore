@@ -1,1 +1,10 @@
 .env
+reports/
+*.json
+*.csv
+venv/
+__pycache__/
+*.pyc
+*.ods
+*.csv
+*report*.md

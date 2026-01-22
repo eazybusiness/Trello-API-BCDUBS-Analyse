@@ -7,7 +7,7 @@ def load_trello_data(filename='trello_cards_detailed.json'):
     with open(filename, 'r') as f:
         return json.load(f)
 
-def export_workload_to_csv(data, output_file='speaker_workload.csv'):
+def export_workload_to_csv(data, output_file='reports/speaker_workload.csv'):
     """Export speaker workload data to CSV format."""
     
     # Get cards from "Skripte zur Aufnahme"
