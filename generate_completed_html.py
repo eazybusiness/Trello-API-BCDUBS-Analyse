@@ -372,6 +372,7 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
             speaker_stats[speaker_name]['projects'].append(project['name'])
     
     total_participations = sum(stats['count'] for stats in speaker_stats.values())
+    total_projects = len(projects)
     sorted_projects = sorted(projects, key=lambda x: x.get('last_activity', ''), reverse=True)
     
     html = f"""<!DOCTYPE html>
@@ -454,7 +455,8 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                             <tr>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Speaker</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Projects Completed</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Percentage</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Coverage</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Share</th>
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
@@ -463,7 +465,8 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
     total_participations = sum(stats['count'] for stats in speaker_stats.values())
     
     for speaker, stats in sorted(speaker_stats.items(), key=lambda x: x[1]['count'], reverse=True):
-        percentage = (stats['count'] / total_participations * 100) if total_participations > 0 else 0
+        coverage_percentage = (stats['count'] / total_projects * 100) if total_projects > 0 else 0
+        share_percentage = (stats['count'] / total_participations * 100) if total_participations > 0 else 0
         
         html += f"""
                             <tr class="hover:bg-gray-50">
@@ -476,9 +479,17 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                                 <td class="px-6 py-4 whitespace-nowrap">
                                     <div class="flex items-center">
                                         <div class="w-24 bg-gray-200 rounded-full h-2 mr-2">
-                                            <div class="bg-green-600 h-2 rounded-full" style="width: {percentage}%"></div>
+                                            <div class="bg-blue-600 h-2 rounded-full" style="width: {coverage_percentage}%"></div>
                                         </div>
-                                        <span class="text-sm text-gray-700">{percentage:.1f}%</span>
+                                        <span class="text-sm text-gray-700">{coverage_percentage:.1f}%</span>
+                                    </div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="flex items-center">
+                                        <div class="w-24 bg-gray-200 rounded-full h-2 mr-2">
+                                            <div class="bg-green-600 h-2 rounded-full" style="width: {share_percentage}%"></div>
+                                        </div>
+                                        <span class="text-sm text-gray-700">{share_percentage:.1f}%</span>
                                     </div>
                                 </td>
                             </tr>
