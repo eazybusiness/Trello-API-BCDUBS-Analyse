@@ -2,7 +2,7 @@
 
 # Automated Report Generation Script for Trello API
 # This script generates all HTML reports and can be used with cronjob
-# Usage: ./generate_all_reports.sh [--upload]
+# Usage: ./generate_all_reports.sh [--no-upload]
 
 set -e  # Exit on error
 

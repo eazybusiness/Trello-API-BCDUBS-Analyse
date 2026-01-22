@@ -13,6 +13,11 @@ cd /home/nop/CascadeProjects/trello_api
 ./generate_all_reports.sh
 ```
 
+Important:
+- `generate_all_reports.sh` is a bash script. Do not run it with Python.
+- Correct: `./generate_all_reports.sh` or `bash generate_all_reports.sh`
+- Incorrect: `python3 generate_all_reports.sh`
+
 Check the log file:
 ```bash
 cat reports/generation.log
@@ -53,9 +58,9 @@ Add this line to run every 15 minutes:
 */15 * * * * /home/nop/CascadeProjects/trello_api/generate_all_reports.sh >> /home/nop/CascadeProjects/trello_api/reports/cron.log 2>&1
 ```
 
-Or with upload enabled:
+To disable upload (for debugging):
 ```bash
-*/15 * * * * /home/nop/CascadeProjects/trello_api/generate_all_reports.sh >> /home/nop/CascadeProjects/trello_api/reports/cron.log 2>&1
+*/15 * * * * /home/nop/CascadeProjects/trello_api/generate_all_reports.sh --no-upload >> /home/nop/CascadeProjects/trello_api/reports/cron.log 2>&1
 ```
 
 ### 4. Verify Cronjob is Running
