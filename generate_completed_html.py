@@ -3,6 +3,7 @@ import re
 from datetime import datetime
 from collections import defaultdict
 import pytz
+from speaker_profiles import get_speaker_profile
 
 def load_trello_data(filename='trello_cards_detailed.json'):
     """Load the detailed Trello data from JSON file."""
@@ -291,13 +292,39 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
             html += """
                                 <div>
                                     <span class="text-sm font-semibold text-gray-500">Team Members:</span>
-                                    <div class="mt-2 flex flex-wrap gap-2">
+                                    <div class="mt-2 space-y-2">
 """
             for member in project['members']:
+                # Get speaker name (first name or full name)
+                speaker_name = member['name'].split()[0] if ' ' in member['name'] else member['name']
+                profile = get_speaker_profile(speaker_name)
+                role = profile.get('role', 'Speaker')
+                
+                # Different styling for narrator vs speakers
+                if 'Narrator' in role:
+                    bg_color = 'bg-purple-50'
+                    text_color = 'text-purple-700'
+                    border_color = 'border-purple-300'
+                    role_icon = '🎙️'
+                elif 'Female' in role:
+                    bg_color = 'bg-pink-50'
+                    text_color = 'text-pink-700'
+                    border_color = 'border-pink-300'
+                    role_icon = '🎤'
+                else:
+                    bg_color = 'bg-blue-50'
+                    text_color = 'text-blue-700'
+                    border_color = 'border-blue-300'
+                    role_icon = '🎭'
+                
                 html += f"""
-                                        <span class="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">
-                                            {member['name']}
-                                        </span>
+                                        <div class="flex items-center justify-between px-3 py-2 {bg_color} border {border_color} rounded-lg">
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-lg">{role_icon}</span>
+                                                <span class="{text_color} font-medium text-sm">{member['name']}</span>
+                                            </div>
+                                            <span class="{text_color} text-xs font-semibold uppercase">{role}</span>
+                                        </div>
 """
             html += """
                                     </div>
