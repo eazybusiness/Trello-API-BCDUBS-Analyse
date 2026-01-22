@@ -121,14 +121,6 @@ def _card_is_complete(card: dict) -> bool:
     return any(_is_checklist_complete(cl) for cl in checklists)
 
 
-def _card_completion_signature(card: dict) -> str:
-    parts: List[str] = []
-    for cl in card.get("checklists") or []:
-        for it in cl.get("checkItems") or []:
-            parts.append(f"{it.get('id','')}:{it.get('state','')}")
-    return "|".join(sorted(parts))
-
-
 def _extract_links_from_comments(card: dict) -> List[str]:
     links: List[str] = []
     for act in card.get("actions") or []:
@@ -199,11 +191,11 @@ def _download_audio(links: Iterable[str], out_dir: Path) -> List[Tuple[str, str]
     return results
 
 
-def _iter_cards(data: dict) -> Iterable[dict]:
-    for _list_name, cards in (data.get("cards_by_list") or {}).items():
-        for c in cards or []:
-            if isinstance(c, dict):
-                yield c
+def _iter_cards_in_list(data: dict, list_name: str) -> Iterable[dict]:
+    cards = (data.get("cards_by_list") or {}).get(list_name) or []
+    for c in cards:
+        if isinstance(c, dict):
+            yield c
 
 
 def _format_email_body(card: dict, links: List[str], audio_links: List[str], download_results: Optional[List[Tuple[str, str]]]) -> str:
@@ -249,6 +241,7 @@ def main() -> int:
     parser.add_argument("--state", dest="state_path", default="checklist_notify_state.json", help="State file to avoid duplicate notifications")
     parser.add_argument("--download", action="store_true", help="Attempt to download direct .mp3/.wav links")
     parser.add_argument("--download-dir", dest="download_dir", default="downloads/audio", help="Where to save downloaded audio")
+    parser.add_argument("--list", dest="list_name", default="Skripte zur Aufnahme", help="Only process cards from this Trello list")
     args = parser.parse_args()
 
     json_path = Path(args.json_path)
@@ -262,20 +255,18 @@ def main() -> int:
     state = _load_state(state_path)
 
     completed_cards: List[dict] = []
-    for card in _iter_cards(data):
+    for card in _iter_cards_in_list(data, args.list_name):
         card_id = str(card.get("id") or "")
         if not card_id:
             continue
         if not _card_is_complete(card):
             continue
 
-        sig = _card_completion_signature(card)
-        prev_sig = state.get(card_id)
-        if prev_sig == sig:
+        if state.get(card_id) == "notified":
             continue
 
         completed_cards.append(card)
-        state[card_id] = sig
+        state[card_id] = "notified"
 
     if not completed_cards:
         return 0
