@@ -9,6 +9,7 @@ set -e  # Exit on error
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PATH="$SCRIPT_DIR/venv"
+PYTHON_BIN="$VENV_PATH/bin/python3"
 REPORTS_DIR="$SCRIPT_DIR/reports"
 LOG_FILE="$SCRIPT_DIR/reports/generation.log"
 
@@ -44,9 +45,14 @@ else
     exit 1
 fi
 
+if [ ! -x "$PYTHON_BIN" ]; then
+    log_message "ERROR: Python interpreter not found at $PYTHON_BIN"
+    exit 1
+fi
+
 # Always refresh trello_cards_detailed.json
 log_message "Fetching fresh data from Trello..."
-python3 trello_client.py >> "$LOG_FILE" 2>&1
+$PYTHON_BIN trello_client.py >> "$LOG_FILE" 2>&1
 if [ $? -ne 0 ]; then
     log_message "ERROR: Failed to fetch Trello data"
     exit 1
@@ -54,7 +60,7 @@ fi
 
 # Generate Speaker Workload Report
 log_message "Generating Speaker Workload Report..."
-python3 generate_html_report.py >> "$LOG_FILE" 2>&1
+$PYTHON_BIN generate_html_report.py >> "$LOG_FILE" 2>&1
 if [ $? -eq 0 ]; then
     log_message "✓ Speaker Workload Report generated successfully"
 else
@@ -64,7 +70,7 @@ fi
 
 # Generate Completed Projects Report
 log_message "Generating Completed Projects Report..."
-python3 generate_completed_html.py >> "$LOG_FILE" 2>&1
+$PYTHON_BIN generate_completed_html.py >> "$LOG_FILE" 2>&1
 if [ $? -eq 0 ]; then
     log_message "✓ Completed Projects Report generated successfully"
 else
@@ -75,7 +81,7 @@ fi
 # Upload reports via SFTP (IONOS_*)
 if [ "$UPLOAD_ENABLED" = true ]; then
     log_message "Uploading reports via SFTP..."
-    python3 upload_reports.py >> "$LOG_FILE" 2>&1
+    $PYTHON_BIN upload_reports.py >> "$LOG_FILE" 2>&1
     UPLOAD_EXIT=$?
     if [ $UPLOAD_EXIT -eq 0 ]; then
         log_message "✓ Reports uploaded successfully"
