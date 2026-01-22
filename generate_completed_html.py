@@ -683,35 +683,6 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                                 </div>
                             </div>
                         </div>
-
-                        <div class="mt-4">
-                            <h4 class="text-sm font-semibold text-gray-700 mb-2">Details</h4>
-                            <div class="overflow-x-auto">
-                                <table class="min-w-full divide-y divide-gray-200">
-                                    <thead class="bg-gray-50">
-                                        <tr>
-                                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Project</th>
-                                            <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Amount ($)</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody class="bg-white divide-y divide-gray-200">
-"""
-
-        for e in sorted(month_entries, key=lambda x: (x['person'], x['project'])):
-            html += f"""
-                                        <tr class="hover:bg-gray-50">
-                                            <td class="px-4 py-2 text-sm text-gray-900">{e['person']}</td>
-                                            <td class="px-4 py-2 text-sm text-gray-700">{e['project']}</td>
-                                            <td class="px-4 py-2 text-sm text-gray-900 font-semibold text-right">{e['amount']:.2f}</td>
-                                        </tr>
-"""
-
-        html += """
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
                     </div>
 """
 
@@ -843,6 +814,11 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                                     </svg>
                                     <span class="break-all">{link[:60]}{'...' if len(link) > 60 else ''}</span>
                                 </a>
+"""
+
+            html += """
+                            </div>
+                        </div>
 """
         
         if _is_due_after_cutoff(project, '2026-01-15'):
