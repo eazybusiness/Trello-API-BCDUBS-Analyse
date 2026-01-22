@@ -1,9 +1,12 @@
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict
+import csv
+import io
+import math
+import requests
 import pytz
-from speaker_profiles import get_speaker_profile
 
 def load_trello_data(filename='trello_cards_detailed.json'):
     """Load the detailed Trello data from JSON file."""
@@ -34,6 +37,197 @@ def extract_google_docs_link(text):
             cleaned_links.append(cleaned)
     
     return cleaned_links
+
+def _normalize_person_key(name: str) -> str:
+    return re.sub(r'\s+', ' ', (name or '').strip()).lower()
+
+def _has_label(project, needle: str) -> bool:
+    needle_l = needle.lower()
+    return any(needle_l in (lbl or '').lower() for lbl in project.get('labels', []))
+
+def _parse_trello_datetime(value: str):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except Exception:
+        return None
+
+def _is_due_after_cutoff(project, cutoff_date_yyyy_mm_dd: str) -> bool:
+    due_dt = _parse_trello_datetime(project.get('due_date', ''))
+    if due_dt is None:
+        return False
+    cutoff_dt = datetime.fromisoformat(f"{cutoff_date_yyyy_mm_dd}T00:00:00+00:00")
+    return due_dt > cutoff_dt
+
+def _role_map():
+    return {
+        'female': {
+            'chaos',
+            'siraverda',
+            'sira',
+            'jade hagemann',
+            'jade',
+            'belli',
+            'jessica nett',
+            'jessica',
+        },
+        'male': {
+            'holger irrmisch',
+            'holger',
+            'martin lindner',
+            'martin',
+            'marcel',
+            'nils sonnenberg',
+            'nils',
+            'drystan dominikus nolte',
+            'drystan',
+            'marco',
+            'liberat schumann',
+            'liberat',
+        },
+        'lucas_aliases': {
+            'lucas',
+            'lucas jacobs',
+            'luckijacobs@live.de',
+            'luckijacobs',
+        },
+    }
+
+def _classify_roles(project):
+    rm = _role_map()
+
+    members = project.get('members', [])
+    member_keys = []
+    for m in members:
+        full_name = m.get('name', '')
+        username = m.get('username', '')
+        member_keys.append(_normalize_person_key(full_name))
+        member_keys.append(_normalize_person_key(username))
+
+    has_lucas = any(k in rm['lucas_aliases'] for k in member_keys)
+    has_holger = any(k in rm['male'] and 'holger' in k for k in member_keys)
+
+    narrator_key = None
+    if has_lucas:
+        narrator_key = 'lucas'
+    elif has_holger:
+        narrator_key = 'holger'
+
+    narrator_member_idx = None
+    if narrator_key is not None:
+        for i, m in enumerate(members):
+            full_k = _normalize_person_key(m.get('name', ''))
+            user_k = _normalize_person_key(m.get('username', ''))
+            if narrator_key == 'lucas' and (full_k in rm['lucas_aliases'] or user_k in rm['lucas_aliases']):
+                narrator_member_idx = i
+                break
+            if narrator_key == 'holger' and ('holger' in full_k or 'holger' in user_k):
+                narrator_member_idx = i
+                break
+
+    roles = {}
+    for i, m in enumerate(members):
+        full_name = m.get('name', '')
+        username = m.get('username', '')
+        full_k = _normalize_person_key(full_name)
+        user_k = _normalize_person_key(username)
+
+        if narrator_member_idx is not None and i == narrator_member_idx:
+            roles[full_name] = 'Narrator'
+            continue
+
+        gender_role = None
+        if full_k in rm['female'] or user_k in rm['female']:
+            gender_role = 'Speaker (Female)'
+        elif full_k in rm['male'] or user_k in rm['male']:
+            gender_role = 'Speaker (Male)'
+        elif full_k in rm['lucas_aliases'] or user_k in rm['lucas_aliases']:
+            gender_role = 'Speaker (Male)'
+        else:
+            gender_role = 'Speaker'
+
+        roles[full_name] = gender_role
+
+    return roles
+
+def _google_sheet_to_csv_url(url: str) -> str | None:
+    if not url:
+        return None
+    if 'docs.google.com/spreadsheets/' not in url:
+        return None
+    m = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
+    if not m:
+        return None
+    sheet_id = m.group(1)
+    gid_match = re.search(r'[#&?]gid=([0-9]+)', url)
+    gid = gid_match.group(1) if gid_match else '0'
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+
+def _extract_duration_minutes_from_sheet_csv(csv_text: str) -> int | None:
+    if not csv_text:
+        return None
+    reader = csv.reader(io.StringIO(csv_text))
+    last_val = None
+    for row in reader:
+        if len(row) >= 5:
+            val = (row[4] or '').strip()
+            if val:
+                last_val = val
+    if not last_val:
+        return None
+
+    m = re.match(r'^(\d{2}):(\d{2}):(\d{2})(?::(\d{2}))?$', last_val)
+    if not m:
+        return None
+
+    hh = int(m.group(1))
+    mm = int(m.group(2))
+    ss = int(m.group(3))
+
+    total_minutes = hh * 60 + mm
+    if ss >= 30:
+        total_minutes += 1
+    return total_minutes
+
+def _find_video_minutes_from_links(links):
+    for link in links or []:
+        csv_url = _google_sheet_to_csv_url(link)
+        if not csv_url:
+            continue
+        try:
+            resp = requests.get(csv_url, timeout=15)
+            if resp.status_code != 200:
+                continue
+            minutes = _extract_duration_minutes_from_sheet_csv(resp.text)
+            if minutes is not None:
+                return minutes
+        except Exception:
+            continue
+    return None
+
+def _compute_rates(project):
+    express = _has_label(project, 'express')
+    budgettausch = _has_label(project, 'budgettausch')
+
+    narrator = 3.0
+    male = 2.25
+    female = 1.25
+
+    if budgettausch:
+        male, female = female, male
+
+    if express:
+        narrator += 0.25
+        male += 0.25
+        female += 0.25
+
+    return {
+        'Narrator': narrator,
+        'Speaker (Male)': male,
+        'Speaker (Female)': female,
+        'Speaker': male,
+    }
 
 def analyze_completed_projects(data):
     """Analyze completed projects from the 'Fertig' list."""
@@ -294,19 +488,16 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                                     <span class="text-sm font-semibold text-gray-500">Team Members:</span>
                                     <div class="mt-2 space-y-2">
 """
+            roles_by_member = _classify_roles(project)
             for member in project['members']:
-                # Get speaker name (first name or full name)
-                speaker_name = member['name'].split()[0] if ' ' in member['name'] else member['name']
-                profile = get_speaker_profile(speaker_name)
-                role = profile.get('role', 'Speaker')
-                
-                # Different styling for narrator vs speakers
-                if 'Narrator' in role:
+                role = roles_by_member.get(member['name'], 'Speaker')
+
+                if role == 'Narrator':
                     bg_color = 'bg-purple-50'
                     text_color = 'text-purple-700'
                     border_color = 'border-purple-300'
                     role_icon = '🎙️'
-                elif 'Female' in role:
+                elif role == 'Speaker (Female)':
                     bg_color = 'bg-pink-50'
                     text_color = 'text-pink-700'
                     border_color = 'border-pink-300'
@@ -377,6 +568,73 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                                 </a>
 """
             html += """
+                            </div>
+                        </div>
+"""
+
+        if _is_due_after_cutoff(project, '2026-01-15'):
+            video_minutes = _find_video_minutes_from_links(project.get('google_docs_links', []))
+            roles_by_member = _classify_roles(project)
+            rates = _compute_rates(project)
+
+            html += """
+                        <div class="mt-4 pt-4 border-t border-gray-200">
+                            <h4 class="text-sm font-semibold text-gray-700 mb-3">💰 Payment (Due after 15.01.2026)</h4>
+"""
+
+            if video_minutes is None:
+                html += """
+                            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
+                                Video length not found in linked Google Spreadsheet (column E).
+                            </div>
+                        </div>
+"""
+            else:
+                total_amount = 0.0
+                html += f"""
+                            <div class="flex items-center justify-between mb-3">
+                                <div class="text-sm text-gray-600">Video length (rounded): <span class=\"font-semibold text-gray-900\">{video_minutes} min</span></div>
+                            </div>
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Person</th>
+                                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                                            <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Minutes</th>
+                                            <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Rate ($/min)</th>
+                                            <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Amount ($)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="bg-white divide-y divide-gray-200">
+"""
+
+                for member in project.get('members', []):
+                    person = member.get('name', '')
+                    role = roles_by_member.get(person, 'Speaker')
+                    rate = rates.get(role, rates['Speaker'])
+                    amount = float(video_minutes) * float(rate)
+                    total_amount += amount
+
+                    html += f"""
+                                        <tr class="hover:bg-gray-50">
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">{person}</td>
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700">{role}</td>
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">{video_minutes}</td>
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">{rate:.2f}</td>
+                                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900 font-semibold text-right">{amount:.2f}</td>
+                                        </tr>
+"""
+
+                html += f"""
+                                    </tbody>
+                                    <tfoot class="bg-gray-50">
+                                        <tr>
+                                            <td class="px-4 py-2 text-sm font-semibold text-gray-900" colspan="4">Total</td>
+                                            <td class="px-4 py-2 text-sm font-bold text-gray-900 text-right">{total_amount:.2f}</td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
                             </div>
                         </div>
 """
