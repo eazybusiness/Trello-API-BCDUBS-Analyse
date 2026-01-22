@@ -66,6 +66,12 @@ def _parse_trello_datetime(value: str):
     except Exception:
         return None
 
+def _month_key(dt: datetime) -> str:
+    return dt.strftime('%Y-%m')
+
+def _month_label(dt: datetime) -> str:
+    return dt.strftime('%m.%Y')
+
 def _is_due_after_cutoff(project, cutoff_date_yyyy_mm_dd: str) -> bool:
     due_dt = _parse_trello_datetime(project.get('due_date', ''))
     if due_dt is None:
@@ -298,6 +304,26 @@ def _compute_rates(project):
 def _project_owner_rate(project) -> float:
     return 2.90 if _has_label(project, 'express') else 2.25
 
+def _compute_payment_entries(project, video_minutes, roles_by_member, rates):
+    entries = []
+    if video_minutes is None:
+        return entries
+
+    for member in project.get('members', []):
+        person = member.get('name', '')
+        role = roles_by_member.get(person, 'Speaker')
+        rate = rates.get(role, rates['Speaker'])
+        amount = float(video_minutes) * float(rate)
+        entries.append({'person': person, 'project': project.get('name', ''), 'role': role, 'minutes': int(video_minutes), 'rate': float(rate), 'amount': float(amount)})
+
+    po = (project.get('project_owner') or '').strip()
+    if po:
+        po_rate = _project_owner_rate(project)
+        po_amount = float(video_minutes) * float(po_rate)
+        entries.append({'person': po, 'project': project.get('name', ''), 'role': 'Project Owner', 'minutes': int(video_minutes), 'rate': float(po_rate), 'amount': float(po_amount)})
+
+    return entries
+
 def analyze_completed_projects(data):
     """Analyze completed projects from the 'Fertig' list."""
     cards = data['cards_by_list'].get('Fertig', [])
@@ -418,6 +444,16 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
     total_participations = sum(stats['count'] for stats in speaker_stats.values())
     total_projects = len(projects)
     sorted_projects = sorted(projects, key=lambda x: x.get('last_activity', ''), reverse=True)
+
+    # Monthly summary (starting Jan 2026)
+    monthly_projects = defaultdict(list)
+    for p in projects:
+        due_dt = _parse_trello_datetime(p.get('due_date', ''))
+        if due_dt is None:
+            continue
+        if due_dt < datetime(2026, 1, 1, tzinfo=timezone.utc):
+            continue
+        monthly_projects[_month_key(due_dt)].append(p)
     
     html = f"""<!DOCTYPE html>
 <html lang="de">
@@ -545,6 +581,144 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                 </div>
             </div>
 
+            <!-- Monthly Summary -->
+            <div class="bg-white rounded-lg shadow-lg overflow-hidden mb-8">
+                <div class="px-6 py-4 bg-gray-800 text-white">
+                    <h2 class="text-2xl font-bold">📅 Monthly Summary (from 01.2026)</h2>
+                </div>
+                <div class="p-6 space-y-8">
+"""
+
+    for month_key in sorted(monthly_projects.keys()):
+        month_dt = datetime.fromisoformat(f"{month_key}-01T00:00:00+00:00")
+        month_label = _month_label(month_dt)
+
+        person_totals = defaultdict(float)
+        project_subtotals = []
+        month_entries = []
+
+        for p in sorted(monthly_projects[month_key], key=lambda x: x.get('due_date', '') or ''):
+            project_cache_key = p.get('id') or p.get('url') or p.get('name')
+            cached_minutes = video_length_cache.get(project_cache_key) if project_cache_key else None
+            minutes = cached_minutes
+            if minutes is None:
+                extracted_minutes = _find_video_minutes_from_links(p.get('google_docs_links', []), cache=sheets_cache)
+                minutes = extracted_minutes
+                if project_cache_key and extracted_minutes is not None:
+                    video_length_cache[project_cache_key] = int(extracted_minutes)
+                    cache_dirty = True
+
+            roles_by_member = _classify_roles(p)
+            rates = _compute_rates(p)
+            entries = _compute_payment_entries(p, minutes, roles_by_member, rates)
+            subtotal = sum(e['amount'] for e in entries)
+
+            for e in entries:
+                person_totals[e['person']] += e['amount']
+                month_entries.append(e)
+
+            project_subtotals.append({'project': p.get('name', ''), 'due': (p.get('due_date', '') or '')[:10], 'minutes': minutes, 'subtotal': subtotal})
+
+        html += f"""
+                    <div>
+                        <h3 class="text-xl font-bold text-gray-900 mb-4">{month_label}</h3>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div>
+                                <h4 class="text-sm font-semibold text-gray-700 mb-2">Projects</h4>
+                                <div class="overflow-x-auto">
+                                    <table class="min-w-full divide-y divide-gray-200">
+                                        <thead class="bg-gray-50">
+                                            <tr>
+                                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Project</th>
+                                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Due</th>
+                                                <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Minutes</th>
+                                                <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Subtotal ($)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="bg-white divide-y divide-gray-200">
+"""
+        for ps in project_subtotals:
+            minutes_cell = '—' if ps['minutes'] is None else str(ps['minutes'])
+            subtotal_cell = '—' if ps['minutes'] is None else f"{ps['subtotal']:.2f}"
+            html += f"""
+                                            <tr class="hover:bg-gray-50">
+                                                <td class="px-4 py-2 text-sm text-gray-900">{ps['project']}</td>
+                                                <td class="px-4 py-2 text-sm text-gray-700">{ps['due']}</td>
+                                                <td class="px-4 py-2 text-sm text-gray-700 text-right">{minutes_cell}</td>
+                                                <td class="px-4 py-2 text-sm text-gray-900 font-semibold text-right">{subtotal_cell}</td>
+                                            </tr>
+"""
+
+        html += """
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 class="text-sm font-semibold text-gray-700 mb-2">Totals by Person</h4>
+                                <div class="overflow-x-auto">
+                                    <table class="min-w-full divide-y divide-gray-200">
+                                        <thead class="bg-gray-50">
+                                            <tr>
+                                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                                <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total ($)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="bg-white divide-y divide-gray-200">
+"""
+
+        for person, total in sorted(person_totals.items(), key=lambda x: x[1], reverse=True):
+            html += f"""
+                                            <tr class="hover:bg-gray-50">
+                                                <td class="px-4 py-2 text-sm text-gray-900">{person}</td>
+                                                <td class="px-4 py-2 text-sm text-gray-900 font-semibold text-right">{total:.2f}</td>
+                                            </tr>
+"""
+
+        html += """
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-4">
+                            <h4 class="text-sm font-semibold text-gray-700 mb-2">Details</h4>
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Project</th>
+                                            <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Amount ($)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="bg-white divide-y divide-gray-200">
+"""
+
+        for e in sorted(month_entries, key=lambda x: (x['person'], x['project'])):
+            html += f"""
+                                        <tr class="hover:bg-gray-50">
+                                            <td class="px-4 py-2 text-sm text-gray-900">{e['person']}</td>
+                                            <td class="px-4 py-2 text-sm text-gray-700">{e['project']}</td>
+                                            <td class="px-4 py-2 text-sm text-gray-900 font-semibold text-right">{e['amount']:.2f}</td>
+                                        </tr>
+"""
+
+        html += """
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+"""
+
+    html += """
+                </div>
+            </div>
+
             <!-- Detailed Project List -->
             <div class="space-y-6">
                 <h2 class="text-2xl font-bold text-gray-800">📋 Detailed Project List</h2>
@@ -659,44 +833,18 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                             <div class="space-y-2">
 """
             for link in project['google_docs_links']:
-                if 'docs.google.com' in link:
-                    icon = '📝'
-                    link_type = 'Document'
-                    bg_color = 'bg-blue-50'
-                    text_color = 'text-blue-700'
-                elif 'sheets.google.com' in link or 'spreadsheets' in link:
-                    icon = '📊'
-                    link_type = 'Spreadsheet'
-                    bg_color = 'bg-green-50'
-                    text_color = 'text-green-700'
-                elif 'drive.google.com' in link:
-                    icon = '📁'
-                    link_type = 'Drive Folder'
-                    bg_color = 'bg-yellow-50'
-                    text_color = 'text-yellow-700'
-                else:
-                    icon = '🔗'
-                    link_type = 'Link'
-                    bg_color = 'bg-gray-50'
-                    text_color = 'text-gray-700'
-                
+                if 'drive.google.com' in (link or ''):
+                    continue
                 html += f"""
-                                <a href="{link}" target="_blank" class="flex items-center p-3 {bg_color} rounded-lg hover:shadow-md transition-shadow">
-                                    <span class="text-2xl mr-3">{icon}</span>
-                                    <div class="flex-1 min-w-0">
-                                        <p class="text-xs font-semibold {text_color} uppercase">{link_type}</p>
-                                        <p class="text-sm {text_color} truncate">{link}</p>
-                                    </div>
-                                    <svg class="w-5 h-5 {text_color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                <a href="{link}" target="_blank" class="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 hover:underline">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 015.656 0l.707.707a4 4 0 010 5.656l-4.243 4.243a4 4 0 01-5.656 0l-1.414-1.414"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.172 13.828a4 4 0 01-5.656 0l-.707-.707a4 4 0 010-5.656l4.243-4.243a4 4 0 015.656 0l1.414 1.414"></path>
                                     </svg>
+                                    <span class="break-all">{link[:60]}{'...' if len(link) > 60 else ''}</span>
                                 </a>
 """
-            html += """
-                            </div>
-                        </div>
-"""
-
+        
         if _is_due_after_cutoff(project, '2026-01-15'):
             project_cache_key = project.get('id') or project.get('url') or project.get('name')
             cached_minutes = None
@@ -715,14 +863,14 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
 
             html += """
                         <div class="mt-4 pt-4 border-t border-gray-200">
-                            <h4 class="text-sm font-semibold text-gray-700 mb-3">💰 Payment (Due after 15.01.2026)</h4>
+                            <h4 class="text-sm font-semibold text-gray-700 mb-3">💰 Payment (New rates from 15.1.26)</h4>
 """
 
             total_amount = 0.0
             minutes_label = "—" if video_minutes is None else f"{video_minutes} min"
             html += f"""
                             <div class="flex items-center justify-between mb-3">
-                                <div class="text-sm text-gray-600">Video length (rounded): <span class=\"font-semibold text-gray-900\">{minutes_label}</span></div>
+                                <div class="text-sm text-gray-600">Video length (rounded): <span class="font-semibold text-gray-900">{minutes_label}</span></div>
                             </div>
                             <div class="overflow-x-auto">
                                 <table class="min-w-full divide-y divide-gray-200">
@@ -793,9 +941,6 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                                         </tr>
                                     </tfoot>
                                 </table>
-                            </div>
-                            <div class="mt-3 text-xs text-gray-500">
-                                If video length is missing, ensure the linked Google Sheet is publicly accessible and the last non-empty value in column E looks like <span class="font-mono">00:33:44:26</span>.
                             </div>
                         </div>
 """
