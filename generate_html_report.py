@@ -37,6 +37,8 @@ def generate_navigation_menu(current_page='workload'):
 def analyze_speaker_data(data):
     """Analyze speaker workload and return structured data."""
     cards = data['cards_by_list'].get('Skripte zur Aufnahme', [])
+    review_cards = data['cards_by_list'].get('In Review', [])
+    done_cards = data['cards_by_list'].get('Fertig', [])
     
     speaker_data = defaultdict(lambda: {
         'completed_tasks': 0,
@@ -46,6 +48,13 @@ def analyze_speaker_data(data):
     })
     
     speaker_names = list(SPEAKER_PROFILES.keys())
+
+    mentioned_speakers = set()
+    for card in (review_cards + done_cards):
+        haystack = f"{card.get('name', '')} {card.get('desc', '')}".lower()
+        for name in speaker_names:
+            if name.lower() in haystack:
+                mentioned_speakers.add(name)
     
     for card in cards:
         card_name = card['name']
@@ -80,6 +89,9 @@ def analyze_speaker_data(data):
                         'url': card_url
                     }
                     speaker_data[found_speaker]['cards'].append(card_info)
+
+    for name in mentioned_speakers:
+        speaker_data[name]
     
     return speaker_data
 
@@ -212,6 +224,7 @@ def generate_html_report(speaker_data, output_file='reports/speaker_workload_rep
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Completed</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pending</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Completion Rate</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Completion Rating</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">% of Total</th>
                             </tr>
                         </thead>
@@ -220,13 +233,22 @@ def generate_html_report(speaker_data, output_file='reports/speaker_workload_rep
     
     for speaker, data in sorted_speakers:
         total = data['completed_tasks'] + data['uncompleted_tasks']
-        if total == 0:
-            continue
-        
-        completion_rate = data['completed_tasks'] / total * 100
+        completion_rate = (data['completed_tasks'] / total * 100) if total > 0 else 0
         workload_percentage = (total / total_tasks * 100) if total_tasks > 0 else 0
+
+        profile = get_speaker_profile(speaker)
+        is_unavailable = profile['availability'] != 'Available'
+        row_classes = 'opacity-50' if is_unavailable else 'hover:bg-gray-50'
+        speaker_label = f"{speaker} 😴" if is_unavailable else speaker
+        speaker_text_class = 'text-gray-500' if is_unavailable else 'text-gray-900'
+        completed_text_class = 'text-gray-500' if is_unavailable else 'text-green-600'
+        pending_text_class = 'text-gray-500' if is_unavailable else 'text-orange-600'
+        rate_text_class = 'text-gray-500' if is_unavailable else 'text-gray-700'
+        progress_bg_class = 'bg-gray-400' if is_unavailable else 'bg-blue-600'
         
-        if completion_rate == 100:
+        if total == 0:
+            status_badge = '<span class="px-2 py-1 text-xs font-semibold rounded-full bg-gray-100 text-gray-800">—</span>'
+        elif completion_rate == 100:
             status_badge = '<span class="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">✅ Excellent</span>'
         elif completion_rate >= 70:
             status_badge = '<span class="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">👍 Good</span>'
@@ -236,26 +258,26 @@ def generate_html_report(speaker_data, output_file='reports/speaker_workload_rep
             status_badge = '<span class="px-2 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800">🚨 Low</span>'
         
         html += f"""
-                            <tr class="hover:bg-gray-50">
+                            <tr class="{row_classes}">
                                 <td class="px-6 py-4 whitespace-nowrap">
                                     <div class="flex items-center">
-                                        <div class="text-sm font-medium text-gray-900">{speaker}</div>
+                                        <div class="text-sm font-medium {speaker_text_class}">{speaker_label}</div>
                                     </div>
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-semibold">{total}</td>
-                                <td class="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-medium">{data['completed_tasks']}</td>
-                                <td class="px-6 py-4 whitespace-nowrap text-sm text-orange-600 font-medium">{data['uncompleted_tasks']}</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm {completed_text_class} font-medium">{data['completed_tasks']}</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm {pending_text_class} font-medium">{data['uncompleted_tasks']}</td>
                                 <td class="px-6 py-4 whitespace-nowrap">
                                     <div class="flex items-center">
                                         <div class="w-16 bg-gray-200 rounded-full h-2 mr-2">
-                                            <div class="bg-blue-600 h-2 rounded-full" style="width: {completion_rate}%"></div>
+                                            <div class="{progress_bg_class} h-2 rounded-full" style="width: {completion_rate}%"></div>
                                         </div>
-                                        <span class="text-sm text-gray-700">{completion_rate:.1f}%</span>
+                                        <span class="text-sm {rate_text_class}">{completion_rate:.1f}%</span>
                                     </div>
                                 </td>
+                                <td class="px-6 py-4 whitespace-nowrap">{status_badge}</td>
                                 <td class="px-6 py-4 whitespace-nowrap">
-                                    {status_badge}
-                                    <span class="ml-2 text-sm text-gray-500">{workload_percentage:.1f}%</span>
+                                    <span class="text-sm text-gray-500">{workload_percentage:.1f}%</span>
                                 </td>
                             </tr>
 """

@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from collections import defaultdict
+from speaker_profiles import get_speaker_profile
 
 def load_trello_data(filename='trello_cards_detailed.json'):
     """Load the detailed Trello data from JSON file."""
@@ -10,6 +11,8 @@ def load_trello_data(filename='trello_cards_detailed.json'):
 def analyze_speaker_data(data):
     """Analyze speaker workload and return structured data."""
     cards = data['cards_by_list'].get('Skripte zur Aufnahme', [])
+    review_cards = data['cards_by_list'].get('In Review', [])
+    done_cards = data['cards_by_list'].get('Fertig', [])
     
     # Dictionary to store speaker data
     speaker_data = defaultdict(lambda: {
@@ -19,8 +22,14 @@ def analyze_speaker_data(data):
         'upcoming_due_dates': []
     })
     
-    # Speaker names to track
-    speaker_names = ['Lucas', 'Nils', 'Chaos', 'Marcel', 'Holger', 'Marco', 'Martin', 'Drystan', 'Belli', 'Sira', 'Jade', 'Jessica']
+    speaker_names = list(get_speaker_profile.__globals__['SPEAKER_PROFILES'].keys())
+
+    mentioned_speakers = set()
+    for card in (review_cards + done_cards):
+        haystack = f"{card.get('name', '')} {card.get('desc', '')}".lower()
+        for name in speaker_names:
+            if name.lower() in haystack:
+                mentioned_speakers.add(name)
     
     # Process each card
     for card in cards:
@@ -59,6 +68,9 @@ def analyze_speaker_data(data):
                         'url': card_url
                     }
                     speaker_data[found_speaker]['cards'].append(card_info)
+
+    for name in mentioned_speakers:
+        speaker_data[name]
     
     return speaker_data
 
@@ -121,28 +133,32 @@ def generate_markdown_report(speaker_data, output_file='reports/speaker_workload
     # Speaker Usage Table
     report.append("## 📊 Speaker Usage Overview")
     report.append("")
-    report.append("| Speaker | Total Tasks | Completed | Pending | Completion Rate | % of Total Workload |")
-    report.append("|---------|-------------|-----------|---------|-----------------|---------------------|")
+    report.append("| Speaker | Total Tasks | Completed | Pending | Completion Rate | Completion Rating | % of Total Workload |")
+    report.append("|---------|-------------|-----------|---------|-----------------|-------------------|---------------------|")
     
     for speaker, data in sorted_speakers:
         total = data['completed_tasks'] + data['uncompleted_tasks']
-        if total == 0:
-            continue
-        completion_rate = data['completed_tasks'] / total * 100
+        completion_rate = (data['completed_tasks'] / total * 100) if total > 0 else 0
         workload_percentage = (total / total_tasks * 100) if total_tasks > 0 else 0
-        
-        # Add emoji for status
-        status_emoji = ""
-        if completion_rate == 100:
-            status_emoji = " ✅"
+
+        profile = get_speaker_profile(speaker)
+        is_unavailable = profile['availability'] != 'Available'
+        speaker_label = f"{speaker} 😴" if is_unavailable else speaker
+
+        if total == 0:
+            rating = "—"
+        elif completion_rate == 100:
+            rating = "✅ Excellent"
         elif completion_rate >= 70:
-            status_emoji = " 👍"
+            rating = "👍 Good"
         elif completion_rate >= 40:
-            status_emoji = " ⚠️"
+            rating = "⚠️ Fair"
         else:
-            status_emoji = " 🚨"
-        
-        report.append(f"| {speaker}{status_emoji} | {total} | {data['completed_tasks']} | {data['uncompleted_tasks']} | {completion_rate:.1f}% | {workload_percentage:.1f}% |")
+            rating = "🚨 Low"
+
+        report.append(
+            f"| {speaker_label} | {total} | {data['completed_tasks']} | {data['uncompleted_tasks']} | {completion_rate:.1f}% | {rating} | {workload_percentage:.1f}% |"
+        )
     
     report.append("")
     
