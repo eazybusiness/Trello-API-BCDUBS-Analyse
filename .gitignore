@@ -9,5 +9,6 @@ __pycache__/
 *.ods
 *.csv
 *report*.md
+data/
 downloads/
 checklist_notify_state.json

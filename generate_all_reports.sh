@@ -78,6 +78,16 @@ else
     exit 1
 fi
 
+# Generate Late Report
+log_message "Generating Late Report..."
+$PYTHON_BIN generate_late_report.py >> "$LOG_FILE" 2>&1
+if [ $? -eq 0 ]; then
+    log_message "✓ Late Report generated successfully"
+else
+    log_message "ERROR: Failed to generate Late Report"
+    exit 1
+fi
+
 # Upload reports via SFTP (IONOS_*)
 if [ "$UPLOAD_ENABLED" = true ]; then
     log_message "Uploading reports via SFTP..."

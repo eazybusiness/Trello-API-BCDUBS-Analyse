@@ -18,6 +18,7 @@ def generate_navigation_menu(current_page='workload'):
     """Generate navigation menu HTML."""
     workload_active = 'bg-blue-700 text-white' if current_page == 'workload' else 'text-blue-100 hover:bg-blue-600 hover:text-white'
     completed_active = 'bg-blue-700 text-white' if current_page == 'completed' else 'text-blue-100 hover:bg-blue-600 hover:text-white'
+    late_active = 'bg-blue-700 text-white' if current_page == 'late' else 'text-blue-100 hover:bg-blue-600 hover:text-white'
     
     return f"""
     <nav class="bg-gradient-to-r from-blue-600 to-indigo-700 shadow-lg mb-8">
@@ -28,6 +29,9 @@ def generate_navigation_menu(current_page='workload'):
                 </a>
                 <a href="completed_projects_report.html" class="{completed_active} px-4 py-2 rounded-md text-sm font-medium transition-colors">
                     ✅ Completed Projects
+                </a>
+                <a href="late_report.html" class="{late_active} px-4 py-2 rounded-md text-sm font-medium transition-colors">
+                    ⏰ Late Report
                 </a>
             </div>
         </div>
