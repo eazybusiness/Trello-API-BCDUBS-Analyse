@@ -35,6 +35,25 @@ Run the main script to fetch cards from the "True Crime Video Dubs" board:
 python trello_client.py
 ```
 
+Generate all HTML reports (workload, completed, late):
+
+```bash
+./generate_all_reports.sh
+```
+
+The late report uses a local SQLite history database to keep historical data even if cards are later deleted/changed in Trello.
+
+Generate only the late report:
+
+```bash
+python generate_late_report.py
+```
+
+This creates/updates:
+
+- `reports/late_report.html`
+- `data/trello_history.sqlite` (gitignored)
+
 This will:
 - Display all cards grouped by their lists
 - Show card details including labels, due dates, and descriptions
@@ -56,7 +75,10 @@ The `TrelloClient` class provides the following methods:
 trello_api/
 ├── .env                # API credentials (gitignored)
 ├── .gitignore          # Git ignore file
+├── data/               # Local SQLite history (gitignored)
 ├── requirements.txt    # Python dependencies
+├── generate_all_reports.sh
+├── generate_late_report.py
 ├── trello_client.py    # Main client script
 ├── trello_cards.json   # Output data (generated)
 └── README.md          # This file
