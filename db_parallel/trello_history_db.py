@@ -71,6 +71,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             due_utc TEXT,
             closed INTEGER NOT NULL DEFAULT 0,
             archived INTEGER NOT NULL DEFAULT 0,
+            raw_json TEXT,
             last_seen_run_id INTEGER,
             last_seen_at_utc TEXT
         );
@@ -107,6 +108,12 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
+
+    # Lightweight migration for existing DBs that were created before raw_json existed.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(cards)").fetchall()}
+    if "raw_json" not in cols:
+        conn.execute("ALTER TABLE cards ADD COLUMN raw_json TEXT")
+
     conn.commit()
 
 
@@ -170,8 +177,8 @@ def ingest_trello_data(
                 """
                 INSERT INTO cards (
                     card_id, board_id, board_name, list_name, name, short_url,
-                    due_utc, closed, archived, last_seen_run_id, last_seen_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                    due_utc, closed, archived, raw_json, last_seen_run_id, last_seen_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                 ON CONFLICT(card_id) DO UPDATE SET
                     board_id=excluded.board_id,
                     board_name=excluded.board_name,
@@ -181,6 +188,7 @@ def ingest_trello_data(
                     due_utc=excluded.due_utc,
                     closed=excluded.closed,
                     archived=0,
+                    raw_json=excluded.raw_json,
                     last_seen_run_id=excluded.last_seen_run_id,
                     last_seen_at_utc=excluded.last_seen_at_utc
                 """,
@@ -193,6 +201,7 @@ def ingest_trello_data(
                     card.get("shortUrl") or card.get("url"),
                     card.get("due"),
                     1 if card.get("closed") else 0,
+                    json.dumps(card, ensure_ascii=False, sort_keys=True),
                     run.run_id,
                     now_utc,
                 ),
