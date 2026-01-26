@@ -10,5 +10,7 @@ __pycache__/
 *.csv
 *report*.md
 data/
+db_parallel/data/
+db_parallel/reports/
 downloads/
 checklist_notify_state.json
