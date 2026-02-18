@@ -53,10 +53,15 @@ def get_invoice_number(month_key):
     return f"{year}-{invoice_num:04d}"
 
 def get_invoice_items_for_month(projects, month_key):
-    """Get invoice items for a specific month."""
+    """Get invoice items for a specific month - only NP's projects."""
     monthly_items = []
     
     for p in projects:
+        # Only include projects where P.O. is NP
+        po = (p.get('project_owner') or '').strip()
+        if po != 'NP':
+            continue
+        
         # Use 'Abgenommen am' first, fallback to due_date
         date_field = p.get('abgenommen_am') or p.get('due_date', '')
         due_dt = _parse_trello_datetime(date_field)
@@ -83,32 +88,18 @@ def get_invoice_items_for_month(projects, month_key):
             minutes = _find_video_minutes_from_links(p.get('google_docs_links', []))
         
         if minutes is not None:
-            # Calculate payment entries
-            roles_by_member = _classify_roles(p)
-            rates = _compute_rates(p)
-            entries = _compute_payment_entries(p, minutes, roles_by_member, rates)
+            # Use P.O. rates with discounts already included
+            is_express = any('express' in label.lower() for label in p.get('labels', []))
+            po_rate = 2.61 if is_express else 2.02  # P.O. rates with 90% discount
             
-            # Sum all entries for this project
-            project_total = sum(entry['amount'] for entry in entries)
-            
-            # Determine discount based on project type
-            discount = 0.0
-            if any('express' in label.lower() for label in p.get('labels', [])):
-                discount = 0.4  # 40% discount for express
-            else:
-                discount = 0.1  # 10% discount for normal projects
-            
-            # Calculate final amount
-            discount_amount = project_total * discount
-            final_amount = project_total - discount_amount
+            # Calculate total (rate * minutes)
+            total = po_rate * minutes
             
             monthly_items.append({
                 'project': p.get('name', ''),
                 'minutes': minutes,
-                'subtotal': project_total,
-                'discount_percent': discount * 100,
-                'discount_amount': discount_amount,
-                'final_amount': final_amount
+                'rate': po_rate,
+                'total': total
             })
     
     return monthly_items
@@ -130,10 +121,10 @@ def generate_invoice_html(month_key, output_file='reports/invoices/'):
         return None
     
     # Calculate totals
-    subtotal = sum(item['final_amount'] for item in items)
-    tax_rate = 0.16  # 16% tax
+    subtotal = sum(item['total'] for item in items)
+    tax_rate = 0.16  # 16% tax (included in subtotal)
     tax_amount = subtotal * tax_rate
-    total = subtotal + tax_amount
+    total = subtotal  # Tax is included, so total equals subtotal
     
     # Get invoice details
     invoice_number = get_invoice_number(month_key)
@@ -356,9 +347,9 @@ def generate_invoice_html(month_key, output_file='reports/invoices/'):
             <thead>
                 <tr>
                     <th>ITEM</th>
-                    <th>PRICE in USD</th>
-                    <th>DISCOUNT</th>
-                    <th>SUBTOTAL</th>
+                    <th>RATE in USD</th>
+                    <th>MINUTES</th>
+                    <th>TOTAL</th>
                 </tr>
             </thead>
             <tbody>
@@ -366,13 +357,12 @@ def generate_invoice_html(month_key, output_file='reports/invoices/'):
     
     # Add items to table
     for item in items:
-        price_per_minute = item['subtotal'] / item['minutes'] if item['minutes'] > 0 else 0
         html += f"""
                 <tr>
                     <td>{item['project']}</td>
-                    <td>${price_per_minute:.2f}</td>
-                    <td>{item['discount_percent']:.0f}%</td>
-                    <td>${item['final_amount']:.2f}</td>
+                    <td>${item['rate']:.2f}</td>
+                    <td>{item['minutes']}</td>
+                    <td>${item['total']:.2f}</td>
                 </tr>
 """
     
