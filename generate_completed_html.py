@@ -371,9 +371,9 @@ def analyze_completed_projects(data):
             if field_name == 'P.O.' and isinstance(value, dict):
                 project_owner = (value.get('text') or '').strip() or project_owner
             elif field_name == 'Abgenommen am' and isinstance(value, dict):
-                abgenommen_am = (value.get('text') or '').strip() or abgenommen_am
+                abgenommen_am = (value.get('date') or '').strip() or abgenommen_am
             elif field_name == 'minuten' and isinstance(value, dict):
-                minuten = (value.get('text') or '').strip() or minuten
+                minuten = (value.get('number') or '').strip() or minuten
 
         project = {
             'id': card.get('id', ''),
