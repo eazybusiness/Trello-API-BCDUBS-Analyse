@@ -203,13 +203,18 @@ def _extract_duration_minutes_from_sheet_csv(csv_text: str) -> int | None:
     reader = csv.reader(io.StringIO(csv_text))
     last_val = None
     for row in reader:
-        if len(row) >= 5:
-            val = (row[4] or '').strip()
+        if len(row) >= 4:  # Check for at least 4 columns (GViz format)
+            val = (row[3] or '').strip()  # Use column 4 (index 3) for GViz format
+            if val:
+                last_val = val
+        elif len(row) >= 5:  # Check for at least 5 columns (standard CSV format)
+            val = (row[4] or '').strip()  # Use column 5 (index 4) for standard format
             if val:
                 last_val = val
     if not last_val:
         return None
 
+    # Handle both HH:MM:SS and HH:MM:SS:ms formats
     m = re.match(r'^(\d{2}):(\d{2}):(\d{2})(?::(\d{2}))?$', last_val)
     if not m:
         return None
