@@ -223,6 +223,21 @@ def _extract_duration_minutes_from_sheet_csv(csv_text: str) -> int | None:
         total_minutes += 1
     return total_minutes
 
+def _parse_minutes_from_custom_field(minutes_str: str) -> int | None:
+    """Parse minutes from custom field string."""
+    if not minutes_str:
+        return None
+    
+    # Try to extract number from string (handles various formats)
+    import re
+    match = re.search(r'(\d+)', minutes_str.strip())
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+    return None
+
 def _find_video_minutes_from_links(links, cache: dict | None = None):
     # Allow disabling Sheets fetch entirely to guarantee fast runs.
     if os.getenv('SHEETS_FETCH', '1').strip() in {'0', 'false', 'False', 'no', 'NO'}:
@@ -302,7 +317,7 @@ def _compute_rates(project):
     }
 
 def _project_owner_rate(project) -> float:
-    return 2.90 if _has_label(project, 'express') else 2.25
+    return (2.90 * 0.9) if _has_label(project, 'express') else (2.25 * 0.9)
 
 def _compute_payment_entries(project, video_minutes, roles_by_member, rates):
     entries = []
@@ -335,17 +350,25 @@ def analyze_completed_projects(data):
     
     for card in cards:
         project_owner = None
+        abgenommen_am = None
+        minuten = None
+        
         for item in card.get('customFieldItems', []) or []:
             if not isinstance(item, dict):
                 continue
             cf = custom_fields_by_id.get(item.get('idCustomField'))
             if not cf:
                 continue
-            if (cf.get('name') or '').strip() != 'P.O.':
-                continue
+            
+            field_name = (cf.get('name') or '').strip()
             value = item.get('value') or {}
-            if isinstance(value, dict):
+            
+            if field_name == 'P.O.' and isinstance(value, dict):
                 project_owner = (value.get('text') or '').strip() or project_owner
+            elif field_name == 'Abgenommen am' and isinstance(value, dict):
+                abgenommen_am = (value.get('text') or '').strip() or abgenommen_am
+            elif field_name == 'minuten' and isinstance(value, dict):
+                minuten = (value.get('text') or '').strip() or minuten
 
         project = {
             'id': card.get('id', ''),
@@ -357,7 +380,9 @@ def analyze_completed_projects(data):
             'members': [],
             'google_docs_links': [],
             'labels': [label.get('name', '') for label in card.get('labels', [])],
-            'project_owner': project_owner
+            'project_owner': project_owner,
+            'abgenommen_am': abgenommen_am,
+            'minuten': minuten
         }
         
         for member in card.get('members', []):
@@ -452,7 +477,9 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
     # Monthly summary (starting at new rates cutoff)
     monthly_projects = defaultdict(list)
     for p in projects:
-        due_dt = _parse_trello_datetime(p.get('due_date', ''))
+        # Use 'Abgenommen am' first, fallback to due_date
+        date_field = p.get('abgenommen_am') or p.get('due_date', '')
+        due_dt = _parse_trello_datetime(date_field)
         if due_dt is None:
             continue
         if due_dt < datetime(2026, 1, 15, tzinfo=timezone.utc):
@@ -604,10 +631,20 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
         project_subtotals = []
         month_entries = []
 
-        for p in sorted(monthly_projects[month_key], key=lambda x: x.get('due_date', '') or ''):
+        for p in sorted(monthly_projects[month_key], key=lambda x: x.get('abgenommen_am') or x.get('due_date', '') or ''):
             project_cache_key = p.get('id') or p.get('url') or p.get('name')
             cached_minutes = video_length_cache.get(project_cache_key) if project_cache_key else None
             minutes = cached_minutes
+            
+            # Use custom field 'minuten' first, fallback to Google Sheets
+            if minutes is None:
+                custom_minutes = _parse_minutes_from_custom_field(p.get('minuten'))
+                if custom_minutes is not None:
+                    minutes = custom_minutes
+                    if project_cache_key:
+                        video_length_cache[project_cache_key] = int(custom_minutes)
+                        cache_dirty = True
+            
             if minutes is None:
                 extracted_minutes = _find_video_minutes_from_links(p.get('google_docs_links', []), cache=sheets_cache)
                 minutes = extracted_minutes
@@ -624,7 +661,7 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                 person_totals[e['person']] += e['amount']
                 month_entries.append(e)
 
-            project_subtotals.append({'project': p.get('name', ''), 'due': (p.get('due_date', '') or '')[:10], 'minutes': minutes, 'subtotal': subtotal})
+            project_subtotals.append({'project': p.get('name', ''), 'due': ((p.get('abgenommen_am') or p.get('due_date', '') or '')[:10]), 'minutes': minutes, 'subtotal': subtotal})
 
         html += f"""
                     <div>
@@ -835,6 +872,16 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                 cached_minutes = video_length_cache.get(project_cache_key)
 
             video_minutes = cached_minutes
+            
+            # Use custom field 'minuten' first, fallback to Google Sheets
+            if video_minutes is None:
+                custom_minutes = _parse_minutes_from_custom_field(project.get('minuten'))
+                if custom_minutes is not None:
+                    video_minutes = custom_minutes
+                    if project_cache_key:
+                        video_length_cache[project_cache_key] = int(custom_minutes)
+                        cache_dirty = True
+            
             if video_minutes is None:
                 extracted_minutes = _find_video_minutes_from_links(project.get('google_docs_links', []), cache=sheets_cache)
                 video_minutes = extracted_minutes
