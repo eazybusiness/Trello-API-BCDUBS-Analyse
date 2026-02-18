@@ -666,7 +666,7 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                 person_totals[e['person']] += e['amount']
                 month_entries.append(e)
 
-            project_subtotals.append({'project': p.get('name', ''), 'due': ((p.get('abgenommen_am') or p.get('due_date', '') or '')[:10]), 'minutes': minutes, 'subtotal': subtotal})
+            project_subtotals.append({'project': p.get('name', ''), 'completion_date': ((p.get('abgenommen_am') or p.get('due_date', '') or '')[:10]), 'minutes': minutes, 'subtotal': subtotal})
 
         html += f"""
                     <div>
@@ -680,7 +680,7 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
                                         <thead class="bg-gray-50">
                                             <tr>
                                                 <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Project</th>
-                                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Due</th>
+                                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Completion Date</th>
                                                 <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Minutes</th>
                                                 <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Subtotal ($)</th>
                                             </tr>
@@ -693,7 +693,7 @@ def generate_completed_html_report(projects, output_file='reports/completed_proj
             html += f"""
                                             <tr class="hover:bg-gray-50">
                                                 <td class="px-4 py-2 text-sm text-gray-900">{ps['project']}</td>
-                                                <td class="px-4 py-2 text-sm text-gray-700">{ps['due']}</td>
+                                                <td class="px-4 py-2 text-sm text-gray-700">{ps['completion_date']}</td>
                                                 <td class="px-4 py-2 text-sm text-gray-700 text-right">{minutes_cell}</td>
                                                 <td class="px-4 py-2 text-sm text-gray-900 font-semibold text-right">{subtotal_cell}</td>
                                             </tr>
