@@ -202,6 +202,7 @@ def _format_email_body(card: dict, links: List[str], audio_links: List[str], dow
     name = card.get("name") or "(unnamed)"
     url = card.get("shortUrl") or card.get("url") or ""
     due = card.get("due") or ""
+    description = card.get("desc") or ""
 
     lines: List[str] = []
     lines.append("Checklist completed in Trello")
@@ -211,6 +212,13 @@ def _format_email_body(card: dict, links: List[str], audio_links: List[str], dow
         lines.append(f"Trello: {url}")
     if due:
         lines.append(f"Due: {due}")
+    
+    # Add project description if available
+    if description:
+        lines.append("")
+        lines.append("Project Description:")
+        lines.append(description)
+    
     lines.append("")
 
     if links:
