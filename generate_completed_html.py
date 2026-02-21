@@ -372,7 +372,7 @@ def analyze_completed_projects(data):
                 project_owner = (value.get('text') or '').strip() or project_owner
             elif field_name == 'Abgenommen am' and isinstance(value, dict):
                 abgenommen_am = (value.get('date') or '').strip() or abgenommen_am
-            elif field_name == 'minuten' and isinstance(value, dict):
+            elif field_name.lower() == 'minuten' and isinstance(value, dict):
                 minuten = (value.get('number') or '').strip() or minuten
 
         project = {
