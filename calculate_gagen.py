@@ -177,7 +177,7 @@ class GagenCalculator:
         else:
             raise Exception(f"Failed to download sheet. Status code: {response.status_code}")
     
-    def parse_timecode(self, timecode: str) -> float:
+    def parse_timecode(self, timecode: str) -> Tuple[float, int]:
         """
         Parse timecode in format HH:MM:SS:FF to total minutes.
         
@@ -185,10 +185,10 @@ class GagenCalculator:
             timecode: Timecode string (e.g., "00:05:23:12")
         
         Returns:
-            Total minutes as float
+            Tuple of (total_minutes as float, seconds as int)
         """
         if not timecode or pd.isna(timecode):
-            return 0.0
+            return 0.0, 0
         
         try:
             # Handle format HH:MM:SS:FF or HH:MM:SS
@@ -200,11 +200,11 @@ class GagenCalculator:
                 # Ignore frames (FF) if present
                 
                 total_minutes = hours * 60 + minutes + seconds / 60.0
-                return total_minutes
+                return total_minutes, seconds
             else:
-                return 0.0
+                return 0.0, 0
         except (ValueError, IndexError):
-            return 0.0
+            return 0.0, 0
     
     def analyze_script_data(self, df: pd.DataFrame) -> Dict:
         """
@@ -242,39 +242,60 @@ class GagenCalculator:
             end_times = df['End time'].dropna()
             if len(end_times) > 0:
                 last_timecode = end_times.iloc[-1]
-                total_minutes = self.parse_timecode(last_timecode)
-                # Round up to next full minute
-                total_minutes = int(total_minutes) + (1 if total_minutes % 1 > 0 else 0)
+                total_minutes_float, seconds = self.parse_timecode(last_timecode)
+                # Only round up if seconds >= 10, otherwise round down
+                if seconds >= 10:
+                    total_minutes = int(total_minutes_float) + 1
+                else:
+                    total_minutes = int(total_minutes_float)
             else:
                 total_minutes = 0
         else:
             total_minutes = 0
         
-        # Get total lines from Paragraph index
-        if 'Paragraph index' in df.columns:
-            line_numbers = pd.to_numeric(df['Paragraph index'], errors='coerce').dropna()
-            total_lines = int(line_numbers.max()) if len(line_numbers) > 0 else len(df)
-        else:
-            total_lines = len(df)
-        
-        # Count lines per speaker
+        # Count lines per speaker and extract gender from Voices column
         lines_per_speaker = {}
+        speaker_gender = {}
         lines_per_color_group = {group: 0 for group in ColorMatcher.COLOR_GROUPS.keys()}
         
-        if 'Speaker' in df.columns:
-            speaker_data = df['Speaker'].dropna()
-            speaker_counts = speaker_data.value_counts()
-            lines_per_speaker = speaker_counts.to_dict()
-            
-            # Note: We cannot extract background colors from CSV
-            print("\n⚠️  WARNING: Background colors cannot be extracted from CSV export.")
-            print("    Color-based character group analysis will be skipped.")
-            print("    To get color data, you would need to use Google Sheets API with authentication.")
+        if 'Speaker' in df.columns and 'Voices' in df.columns:
+            # Create a mapping of speaker to gender
+            for idx, row in df.iterrows():
+                speaker = row.get('Speaker')
+                voices = row.get('Voices')
+                
+                if pd.notna(speaker) and pd.notna(voices):
+                    speaker = str(speaker).strip()
+                    voices_lower = str(voices).lower()
+                    
+                    # Determine gender from Voices column
+                    if 'female' in voices_lower or 'weiblich' in voices_lower:
+                        gender = 'weiblich'
+                    elif 'male' in voices_lower or 'männlich' in voices_lower:
+                        gender = 'männlich'
+                    else:
+                        gender = 'unbekannt'
+                    
+                    # Store gender for this speaker (use first occurrence)
+                    if speaker not in speaker_gender:
+                        speaker_gender[speaker] = gender
+                    
+                    # Count lines
+                    if speaker in lines_per_speaker:
+                        lines_per_speaker[speaker] += 1
+                    else:
+                        lines_per_speaker[speaker] = 1
+        
+        # Get total lines as sum of all speaker lines
+        total_lines = sum(lines_per_speaker.values()) if lines_per_speaker else 0
+        
+        print(f"\nℹ️  Using sum of speaker lines: {total_lines}")
         
         return {
             'total_minutes': total_minutes,
             'total_lines': total_lines,
             'lines_per_speaker': lines_per_speaker,
+            'speaker_gender': speaker_gender,
             'lines_per_color_group': lines_per_color_group
         }
     
@@ -305,30 +326,44 @@ class GagenCalculator:
         Returns:
             Dictionary with wage calculations
         """
-        rate_per_line = 8.75 if not is_express else 9.75
+        rate_per_minute = 8.75 if not is_express else 9.75
         total_minutes = analysis['total_minutes']
         total_lines = analysis['total_lines']
+        
+        # Maximum budget (cannot exceed this)
+        max_budget = rate_per_minute * total_minutes
         
         if total_lines == 0:
             print("⚠️  WARNING: Total lines is 0. Cannot calculate wages.")
             return {
-                'rate_per_line': rate_per_line,
+                'rate_per_minute': rate_per_minute,
+                'max_budget': max_budget,
                 'base_rate': 0,
                 'speaker_wages': {},
                 'color_group_wages': {}
             }
         
-        # Base rate: rate * minutes / total_lines
-        base_rate = rate_per_line * total_minutes / total_lines
+        # Base rate: max_budget / total_lines
+        base_rate = max_budget / total_lines
         
         # Calculate per speaker
         speaker_wages = {}
+        total_calculated_wages = 0
+        
         for speaker, lines in analysis['lines_per_speaker'].items():
             wage = base_rate * lines
+            gender = analysis.get('speaker_gender', {}).get(speaker, 'unbekannt')
             speaker_wages[speaker] = {
                 'lines': lines,
+                'gender': gender,
                 'wage': round(wage, 2)
             }
+            total_calculated_wages += wage
+        
+        # Verify budget cap (with small tolerance for floating-point precision)
+        if total_calculated_wages > max_budget + 0.01:
+            print(f"⚠️  WARNING: Calculated wages (${total_calculated_wages:.2f}) exceed budget (${max_budget:.2f})")
+            print(f"    This should not happen. Recalculating...")
         
         # Calculate per color group
         color_group_wages = {}
@@ -341,7 +376,8 @@ class GagenCalculator:
                 }
         
         return {
-            'rate_per_line': rate_per_line,
+            'rate_per_minute': rate_per_minute,
+            'max_budget': round(max_budget, 2),
             'base_rate': round(base_rate, 4),
             'total_minutes': total_minutes,
             'total_lines': total_lines,
@@ -376,23 +412,26 @@ class GagenCalculator:
         # Calculation parameters
         ws_summary['A4'] = 'Berechnungsgrundlage:'
         ws_summary['A4'].font = Font(bold=True)
-        ws_summary['A5'] = 'Satz pro Line:'
-        ws_summary['B5'] = f"€{wages['rate_per_line']}"
+        ws_summary['A5'] = 'Satz pro Minute:'
+        ws_summary['B5'] = f"${wages['rate_per_minute']}"
         ws_summary['A6'] = 'Gesamtminuten:'
         ws_summary['B6'] = wages['total_minutes']
-        ws_summary['A7'] = 'Gesamtanzahl Lines:'
+        ws_summary['A7'] = 'Gesamtanzahl Lines (Summe):'
         ws_summary['B7'] = wages['total_lines']
-        ws_summary['A8'] = 'Basis-Rate (€/Line):'
-        ws_summary['B8'] = f"€{wages['base_rate']}"
+        ws_summary['A8'] = 'Maximales Budget:'
+        ws_summary['B8'] = f"${wages['max_budget']}"
+        ws_summary['A9'] = 'Basis-Rate ($/Line):'
+        ws_summary['B9'] = f"${wages['base_rate']}"
         
         # Speaker wages
         ws_speakers = wb.create_sheet('Sprecher')
         ws_speakers['A1'] = 'Sprecher'
-        ws_speakers['B1'] = 'Anzahl Lines'
-        ws_speakers['C1'] = 'Gage (€)'
+        ws_speakers['B1'] = 'Geschlecht'
+        ws_speakers['C1'] = 'Anzahl Lines'
+        ws_speakers['D1'] = 'Gage ($)'
         
         # Style header
-        for cell in ['A1', 'B1', 'C1']:
+        for cell in ['A1', 'B1', 'C1', 'D1']:
             ws_speakers[cell].font = Font(bold=True)
             ws_speakers[cell].fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
             ws_speakers[cell].font = Font(bold=True, color='FFFFFF')
@@ -401,25 +440,26 @@ class GagenCalculator:
         total_speaker_wage = 0
         for speaker, data in sorted(wages['speaker_wages'].items()):
             ws_speakers[f'A{row}'] = speaker
-            ws_speakers[f'B{row}'] = data['lines']
-            ws_speakers[f'C{row}'] = data['wage']
-            ws_speakers[f'C{row}'].number_format = '€#,##0.00'
+            ws_speakers[f'B{row}'] = data.get('gender', 'unbekannt')
+            ws_speakers[f'C{row}'] = data['lines']
+            ws_speakers[f'D{row}'] = data['wage']
+            ws_speakers[f'D{row}'].number_format = '$#,##0.00'
             total_speaker_wage += data['wage']
             row += 1
         
         # Total row
         ws_speakers[f'A{row}'] = 'GESAMT'
         ws_speakers[f'A{row}'].font = Font(bold=True)
-        ws_speakers[f'C{row}'] = total_speaker_wage
-        ws_speakers[f'C{row}'].number_format = '€#,##0.00'
-        ws_speakers[f'C{row}'].font = Font(bold=True)
+        ws_speakers[f'D{row}'] = total_speaker_wage
+        ws_speakers[f'D{row}'].number_format = '$#,##0.00'
+        ws_speakers[f'D{row}'].font = Font(bold=True)
         
         # Color group wages (if available)
         if wages['color_group_wages']:
             ws_groups = wb.create_sheet('Charaktergruppen')
             ws_groups['A1'] = 'Charaktergruppe'
             ws_groups['B1'] = 'Anzahl Lines'
-            ws_groups['C1'] = 'Gage (€)'
+            ws_groups['C1'] = 'Gage ($)'
             
             # Style header
             for cell in ['A1', 'B1', 'C1']:
@@ -433,7 +473,7 @@ class GagenCalculator:
                 ws_groups[f'A{row}'] = group
                 ws_groups[f'B{row}'] = data['lines']
                 ws_groups[f'C{row}'] = data['wage']
-                ws_groups[f'C{row}'].number_format = '€#,##0.00'
+                ws_groups[f'C{row}'].number_format = '$#,##0.00'
                 total_group_wage += data['wage']
                 row += 1
             
@@ -441,7 +481,7 @@ class GagenCalculator:
             ws_groups[f'A{row}'] = 'GESAMT'
             ws_groups[f'A{row}'].font = Font(bold=True)
             ws_groups[f'C{row}'] = total_group_wage
-            ws_groups[f'C{row}'].number_format = '€#,##0.00'
+            ws_groups[f'C{row}'].number_format = '$#,##0.00'
             ws_groups[f'C{row}'].font = Font(bold=True)
         
         # Adjust column widths
@@ -449,6 +489,8 @@ class GagenCalculator:
             ws.column_dimensions['A'].width = 30
             ws.column_dimensions['B'].width = 15
             ws.column_dimensions['C'].width = 15
+            if 'D' in [cell.column_letter for cell in ws[1]]:
+                ws.column_dimensions['D'].width = 15
         
         # Save workbook
         wb.save(output_file)
@@ -514,16 +556,17 @@ class GagenCalculator:
             print("\n5. Checking for Express label...")
             is_express = self.check_express_label(card)
             if is_express:
-                print("✅ Express label found. Using rate: €9.75")
+                print("✅ Express label found. Using rate: $9.75")
             else:
-                print("ℹ️  No Express label. Using standard rate: €8.75")
+                print("ℹ️  No Express label. Using standard rate: $8.75")
             
             # Calculate wages
             print("\n6. Calculating wages...")
             wages = self.calculate_wages(analysis, is_express)
             
             print(f"\n💰 Wage Calculation:")
-            print(f"   Base rate: €{wages['base_rate']}/line")
+            print(f"   Maximum budget: ${wages['max_budget']}")
+            print(f"   Base rate: ${wages['base_rate']}/line")
             print(f"   Total speakers: {len(wages['speaker_wages'])}")
             
             # Create Excel report

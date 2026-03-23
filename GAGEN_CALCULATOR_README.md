@@ -92,13 +92,14 @@ The script generates an Excel file named `gagen_[CARD_ID].xlsx` with three sheet
 
 ### 2. Sprecher (Speakers)
 - Speaker name
+- Gender (männlich/weiblich/unbekannt) - extracted from Voices column
 - Number of lines
-- Calculated wage in EUR
+- Calculated wage in USD
 
 ### 3. Charaktergruppen (Character Groups)
 - Character group name
 - Number of lines
-- Calculated wage in EUR
+- Calculated wage in USD
 
 **Note:** Character group analysis by background color is not available when using CSV export. To enable this feature, Google Sheets API with authentication would be required.
 
@@ -182,18 +183,21 @@ Processing card 1/2: when-cops-save-lives-last-moment
 4. Downloading and analyzing Google Sheet...
 ✅ Downloaded sheet with 557 rows and 8 columns
 
+ℹ️  Using sum of speaker lines: 554
+
 📊 Analysis Results:
    Total Minutes: 18
    Total Lines: 554
    Speakers found: 10
 
 5. Checking for Express label...
-ℹ️  No Express label. Using standard rate: €8.75
+ℹ️  No Express label. Using standard rate: $8.75
 
 6. Calculating wages...
 
 💰 Wage Calculation:
-   Base rate: €0.2843/line
+   Maximum budget: $157.5
+   Base rate: $0.2843/line
    Total speakers: 10
 
 7. Creating Excel report...
@@ -201,6 +205,22 @@ Processing card 1/2: when-cops-save-lives-last-moment
 ✅ Excel report created: gagen_69bc3ad5a851ed58114f5b1d.xlsx
 ✅ Processing complete for card: when-cops-save-lives-last-moment
    Output file: gagen_69bc3ad5a851ed58114f5b1d.xlsx
+
+⚠️  NOTE: File created locally only (read-only mode to protect production data)
+```
+
+## Future Enhancements
+
+- [ ] Google Sheets API integration for color extraction
+- [ ] Automatic upload to Trello (requires write permissions)
+- [ ] Support for multiple sheets per card
+- [ ] Custom rate configuration via environment variables
+- [ ] PDF report generation
+- [ ] Email notification when wages are calculated
+
+## License
+
+Part of the Trello API project for True Crime Video Dubs workflow automation.
 
 ⚠️  NOTE: File created locally only (read-only mode to protect production data)
 ```
