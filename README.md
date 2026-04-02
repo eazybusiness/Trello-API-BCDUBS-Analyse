@@ -41,6 +41,25 @@ Generate all HTML reports (workload, completed, late):
 ./generate_all_reports.sh
 ```
 
+Generate the casting decision report (fairness + availability + role fit):
+
+```bash
+source venv/bin/activate
+python generate_casting_report.py --source json --json-input trello_cards_detailed.json --days 60
+```
+
+Optional: Pull fresh data live from Trello before report generation:
+
+```bash
+source venv/bin/activate
+python generate_casting_report.py --source trello --board-name "True Crime Video Dubs" --days 60
+```
+
+This creates:
+
+- `reports/casting_decision_report.html`
+- `reports/casting_decision_report.json`
+
 The late report uses a local SQLite history database to keep historical data even if cards are later deleted/changed in Trello.
 
 Generate only the late report:
@@ -78,6 +97,7 @@ trello_api/
 ├── data/               # Local SQLite history (gitignored)
 ├── requirements.txt    # Python dependencies
 ├── generate_all_reports.sh
+├── generate_casting_report.py
 ├── generate_late_report.py
 ├── trello_client.py    # Main client script
 ├── trello_cards.json   # Output data (generated)
