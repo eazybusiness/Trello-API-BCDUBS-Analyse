@@ -34,7 +34,7 @@ class SpeakerProfile:
 SPEAKERS: Dict[str, SpeakerProfile] = {
     "Lucas": SpeakerProfile({"lucas", "luckitoasti", "luckijacobs", "luckijacobs@live.de"}, "Narrator Standard."),
     "Holger": SpeakerProfile({"holger", "einostler", "holger irrmisch"}, "Old male voice, good for older civs/perps."),
-    "Chaos": SpeakerProfile({"chaos", "7ady.chaos"}, "Wide pitch range, emotional."),
+    "Chaos": SpeakerProfile({"chaos", "7ady.chaos", "jessica nett", "jessicanett4", "jessica"}, "Wide pitch range, emotional."),
     "Sira": SpeakerProfile({"sira", "siramatasashi", "siraverda"}, "Young sounding, less voice variation."),
     "Jade": SpeakerProfile({"jade", "mommyjade", "jade hagemann"}, "Deeper older tone, emotional."),
     "Marcel": SpeakerProfile({"marcel", "speedfreack", "marcel_speedfreack"}, "Deep, young, emotional, good for perps."),
@@ -256,21 +256,66 @@ def build_recommendations(stats: Dict[str, Dict], availability: Dict[str, str]) 
     civis_ranked = rank_speakers(MALE_POOL, stats, availability, {"Holger": -0.15, "Drystan": -0.10, "Marcel": -0.08})
     cops_ranked = rank_speakers(MALE_POOL, stats, availability, {"Martin": -0.25, "Nils": -0.05})
 
+    # Reason: Narrator follows fixed business rule first (Lucas, then Holger),
+    # then fairness ordering for alternatives.
+    narrator_primary = None
+    if availability.get("Lucas") != "unavailable":
+        narrator_primary = "Lucas"
+    elif availability.get("Holger") != "unavailable":
+        narrator_primary = "Holger"
+
+    if narrator_primary:
+        narrator_ranked = [narrator_primary] + [speaker for speaker in narrator_ranked if speaker != narrator_primary]
+
+    # Reason: Chaos and Sira are primary female pool, Jade is fallback.
+    female_primary_pool = [speaker for speaker in ["Chaos", "Sira"] if availability.get(speaker) != "unavailable"]
+    female_primary = None
+    if female_primary_pool:
+        female_primary = sorted(
+            female_primary_pool,
+            key=lambda speaker: (
+                stats[speaker]["recent_jobs"] + (stats[speaker]["active_jobs"] * 0.35),
+                speaker,
+            ),
+        )[0]
+    elif availability.get("Jade") != "unavailable":
+        female_primary = "Jade"
+
+    if female_primary:
+        female_ranked = [female_primary] + [speaker for speaker in female_ranked if speaker != female_primary]
+
     civis_primary = civis_ranked[0] if civis_ranked else None
-    cops_primary = None
-    for candidate in cops_ranked:
-        if candidate != civis_primary:
-            cops_primary = candidate
-            break
+    cops_ranked_no_duplicate = [candidate for candidate in cops_ranked if candidate != civis_primary]
+    cops_primary = cops_ranked_no_duplicate[0] if cops_ranked_no_duplicate else None
     if cops_primary is None and cops_ranked:
         cops_primary = cops_ranked[0]
 
+    narrator_unavailable = [speaker for speaker in NARRATOR_POOL if availability.get(speaker) == "unavailable"]
+    female_unavailable = [speaker for speaker in FEMALE_POOL if availability.get(speaker) == "unavailable"]
+    male_unavailable = [speaker for speaker in MALE_POOL if availability.get(speaker) == "unavailable"]
+
     return {
-        "narrator": {"primary": narrator_ranked[0] if narrator_ranked else None, "ranked": narrator_ranked},
-        "female": {"primary": female_ranked[0] if female_ranked else None, "ranked": female_ranked},
+        "narrator": {
+            "primary": narrator_primary or (narrator_ranked[0] if narrator_ranked else None),
+            "ranked": narrator_ranked,
+            "unavailable": narrator_unavailable,
+        },
+        "female": {
+            "primary": female_primary or (female_ranked[0] if female_ranked else None),
+            "ranked": female_ranked,
+            "unavailable": female_unavailable,
+        },
         "male": {
-            "civis_taeter": {"primary": civis_primary, "ranked": civis_ranked},
-            "cops_beamte": {"primary": cops_primary, "ranked": cops_ranked},
+            "civis_taeter": {
+                "primary": civis_primary,
+                "ranked": civis_ranked,
+                "unavailable": male_unavailable,
+            },
+            "cops_beamte": {
+                "primary": cops_primary,
+                "ranked": cops_ranked_no_duplicate,
+                "unavailable": male_unavailable,
+            },
         },
     }
 
@@ -324,13 +369,16 @@ def generate_html(
             f"<td class='px-4 py-3 text-sm text-gray-600'>{SPEAKERS[speaker].fit_notes}</td></tr>"
         )
 
-    def role_card(title: str, primary: Optional[str], ranked: List[str]) -> str:
-        alternatives = ", ".join(ranked[1:4]) if len(ranked) > 1 else "-"
+    def role_card(title: str, primary: Optional[str], ranked: List[str], unavailable: List[str]) -> str:
+        alternatives_list = [speaker for speaker in ranked if speaker != primary][:3]
+        alternatives = ", ".join(alternatives_list) if alternatives_list else "-"
+        unavailable_text = ", ".join(unavailable) if unavailable else "-"
         return (
             "<div class='bg-white rounded-lg shadow p-5'>"
             f"<h3 class='text-lg font-bold mb-2'>{title}</h3>"
             f"<p class='text-sm mb-2'>Primär: <span class='font-semibold'>{primary or '-'}</span></p>"
             f"<p class='text-sm text-gray-600'>Alternativen: {alternatives}</p>"
+            f"<p class='text-sm text-gray-500 mt-2'>Aktuell nicht verfügbar: {unavailable_text}</p>"
             "</div>"
         )
 
@@ -351,10 +399,10 @@ def generate_html(
     </header>
 
     <section class='grid grid-cols-1 md:grid-cols-2 gap-4 mb-6'>
-      {role_card('Narrator', recommendations['narrator']['primary'], recommendations['narrator']['ranked'])}
-      {role_card('Weibliche Rollen', recommendations['female']['primary'], recommendations['female']['ranked'])}
-      {role_card('Männlich: Zivis/Täter', recommendations['male']['civis_taeter']['primary'], recommendations['male']['civis_taeter']['ranked'])}
-      {role_card('Männlich: Cops/Beamte', recommendations['male']['cops_beamte']['primary'], recommendations['male']['cops_beamte']['ranked'])}
+      {role_card('Narrator', recommendations['narrator']['primary'], recommendations['narrator']['ranked'], recommendations['narrator']['unavailable'])}
+      {role_card('Weibliche Rollen', recommendations['female']['primary'], recommendations['female']['ranked'], recommendations['female']['unavailable'])}
+      {role_card('Männlich: Zivis/Täter', recommendations['male']['civis_taeter']['primary'], recommendations['male']['civis_taeter']['ranked'], recommendations['male']['civis_taeter']['unavailable'])}
+      {role_card('Männlich: Cops/Beamte', recommendations['male']['cops_beamte']['primary'], recommendations['male']['cops_beamte']['ranked'], recommendations['male']['cops_beamte']['unavailable'])}
     </section>
 
     <section class='bg-white rounded-xl shadow overflow-hidden'>
